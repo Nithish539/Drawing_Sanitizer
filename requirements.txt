@@ -1,0 +1,6 @@
+# Pinned to the majors the code is written against. Previously only Flask
+# was listed, so a clean checkout could not run.
+Flask>=2.2.3,<4
+Werkzeug>=2.2.3,<4
+ezdxf>=1.1,<2
+openpyxl>=3.1,<4

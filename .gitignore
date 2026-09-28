@@ -1,0 +1,25 @@
+# Runtime data - never commit these. The previous archive shipped ~250 MB of
+# generated outputs, uploaded drawings and IDE caches.
+Drawing_Analyzer/uploads/
+Drawing_Analyzer/outputs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# IDE / editor
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+obj/
+bin/
+
+# OS
+.DS_Store
+Thumbs.db

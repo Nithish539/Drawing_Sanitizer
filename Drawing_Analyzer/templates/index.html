@@ -1,0 +1,619 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Drawing Analyzer</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <div class="brand-mark"></div>
+            <div>
+                <h1>Drawing Analyzer</h1>
+                <p class="subtitle">Extract floor-plan texts from AutoCAD DXF drawings</p>
+            </div>
+        </div>
+    </header>
+
+    <main class="wrap">
+
+        <!-- STEP 1: upload -->
+        <section class="card" id="step-upload">
+            <div class="card-head">
+                <div class="step-no">1</div>
+                <h2>Upload DXF</h2>
+            </div>
+            <div class="card-body">
+                <div class="actions field-row" style="align-items:center; gap:10px; margin:0 0 10px">
+                    <label class="muted small" for="projectName">Project name <span class="muted">(optional)</span>:</label>
+                    <input id="projectName" class="field field-wide" type="text" maxlength="120" placeholder="e.g. Phoenix - 14">
+                </div>
+                <div class="actions field-row" style="align-items:center; gap:10px; margin:0 0 16px; flex-wrap:wrap">
+                    <label class="small" for="minArea"><b>Floor plate area (sq.m)</b> <span class="required-star">*</span> &nbsp;Min:</label>
+                    <input id="minArea" class="field field-num" type="number" min="1" step="any" required placeholder="e.g. 2000">
+                    <label class="small" for="maxArea">Max:</label>
+                    <input id="maxArea" class="field field-num" type="number" min="1" step="any" required placeholder="e.g. 20000">
+                </div>
+                <div class="drop" id="drop">
+                    <input type="file" id="file" accept=".dxf" hidden />
+                    <div class="drop-inner">
+                        <div>
+                            <button type="button" class="btn btn-primary" id="pickBtn">Choose DXF file</button>
+                            <span class="muted">&nbsp; or drag &amp; drop here</span>
+                        </div>
+                        <div class="muted small">Max 256 MB &middot; units assumed mm &middot; floor plates within the range above</div>
+                    </div>
+                </div>
+                <div class="actions" style="align-items:center; gap:10px; margin-top:12px">
+                    <label class="muted small" for="unitSelect">Units the DXF was drawn in:</label>
+                    <select id="unitSelect" class="unit-select"></select>
+                    <span class="muted small">
+                        <b>This describes the file, not the output.</b> Results are always
+                        reported in sq.m and m. Leave it on auto-detect unless the drawing
+                        is read wrongly &mdash; most architectural DXFs are in millimetres.
+                    </span>
+                </div>
+                <div class="run-row">
+                    <span id="fileChosen" class="chosen-file">No file chosen yet</span>
+                    <button type="button" class="btn btn-primary btn-run" id="runBtn" disabled
+                            title="Choose a DXF file first">&#9654; Run</button>
+                </div>
+                <div id="uploadStatus" class="status"></div>
+                <div id="unitBanner" class="status hidden"></div>
+            </div>
+        </section>
+
+        <!-- STEP 2: pick floors -->
+        <section class="card hidden" id="step-floors">
+            <div class="card-head">
+                <div class="step-no">2</div>
+                <h2>Select floor boundaries</h2>
+            </div>
+            <div class="card-body">
+                <p class="muted"><span id="floorRangeText">Closed polylines in the floor plate range</span> are shown below. Tick the ones that represent actual floor plans and give each a name.</p>
+                <div class="table-wrap">
+                    <table class="grid" id="floorsTable">
+                        <thead>
+                            <tr>
+                                <th style="width:44px"><input type="checkbox" id="selAll" /></th>
+                                <th>Index</th>
+                                <th>Area (sq.m)</th>
+                                <th>Layer</th>
+                                <th>Points</th>
+                                <th>Type</th>
+                                <th>Floor name</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <p class="muted small cad-hint">
+                    <b>Drawing.</b> Every floor plate candidate is outlined; ticked plates
+                    are filled. Click a plate to tick or untick it, hover for its area,
+                    drag to pan, scroll to zoom, double-click to fit.
+                </p>
+                <div id="cadPlates"></div>
+                <div class="actions">
+                    <button class="btn btn-ghost" id="resetBtn">Start over</button>
+                    <button class="btn btn-primary" id="extractBtn">Extract texts &gt;</button>
+                </div>
+                <div id="extractStatus" class="status"></div>
+            </div>
+        </section>
+
+        <!-- STEP 3: results + per-text checkboxes -->
+        <section class="card hidden" id="step-results">
+            <div class="card-head">
+                <div class="step-no">3</div>
+                <h2>Review extracted texts</h2>
+            </div>
+            <div class="card-body">
+                <div class="summary" id="summary"></div>
+
+                <div class="download-row">
+                    <a id="dlXlsx" class="btn btn-accent" href="#" download>&#8595; Download Excel</a>
+                    <a id="dlJson" class="btn btn-ghost" href="#" download>&#8595; Download JSON</a>
+                    <a id="dlDxf" class="btn btn-ghost" href="#" download
+                       style="opacity:0.55; pointer-events:none; cursor:not-allowed"
+                       aria-disabled="true"
+                       title="Generate Boundaries first">&#8595; Download Annotated DXF</a>
+                    <button type="button" id="previewBtn" class="btn btn-accent"
+                            disabled title="Generate Boundaries first">
+                        View boundaries
+                    </button>
+                </div>
+
+                <p class="muted small">
+                    Untick rows below for any text that should NOT have a boundary drawn (e.g. dimensions,
+                    long descriptive notes, leader callouts). Then click <b>Generate Boundaries</b> to
+                    produce the annotated DXF. Use <b>Boundary type</b> to export one family only
+                    (e.g. just <code>STAIR_BOUNDARY</code>) instead of all of them.
+                </p>
+
+                <div class="actions" style="margin-bottom:8px; align-items:center">
+                    <button class="btn btn-ghost" id="checkAllBtn">Check all</button>
+                    <button class="btn btn-ghost" id="uncheckAllBtn">Uncheck all</button>
+                    <label class="muted small" for="boundaryFamily">Boundary type:</label>
+                    <select id="boundaryFamily" class="unit-select"
+                            title="Draw every family, or just one (e.g. only STAIR_BOUNDARY)">
+                        <option value="">All boundaries</option>
+                    </select>
+                    <button class="btn btn-primary" id="generateBtn">Generate Boundaries</button>
+                </div>
+                <div id="annotateStatus" class="status"></div>
+
+                <div class="subtabs" data-subtabs="step3"></div>
+                <div class="subpanes" data-subpanes="step3">
+
+                <div data-pane="Extracted texts">
+                <p class="muted small" id="statusLegend" style="display:none">
+                    <b>Boundary column legend:</b>
+                    ✓ drawn |
+                    X claimed by X-shaft |
+                    ⊕ merged into another room |
+                    ⊂ inside a primary boundary |
+                    ✗ no walls found |
+                    ⊘ other boundary type (not exported this run)
+                </p>
+
+                <div class="tabs" id="tabs"></div>
+                <p class="muted small cad-hint">
+                    <b>Drawing.</b> Each extracted text is a dot in its family colour;
+                    unticked texts are hollow, and texts hidden by the search or the
+                    boundary type are faded. Click a dot to find its row, or a row to
+                    find its dot.
+                </p>
+                <div id="cadTexts"></div>
+                <div class="text-search">
+                    <input type="search" id="textSearch" class="field"
+                           placeholder="Search texts on this floor..."
+                           autocomplete="off" aria-label="Search extracted texts" />
+                </div>
+                <div id="rowsFilterNote" class="muted small" style="margin:6px 0 4px;color:#1f3a5f;font-weight:600"></div>
+                <div class="table-wrap">
+                    <table class="grid" id="resultsTable">
+                        <thead>
+                            <tr>
+                                <th style="width:44px">
+                                    <input type="checkbox" id="rowsSelAll" checked
+                                           title="Check / uncheck all rows on this floor" />
+                                </th>
+                                <th style="width:70px">Sr.No</th>
+                                <th>Text Detected</th>
+                                <th>Detected from</th>
+                                <th>Layer</th>
+                                <th style="width:160px" title="Family this text's boundary will be drawn under. Auto-suggested from the text, change it if needed before Generate.">Family</th>
+                                <th style="width:120px" title="Boundary status after Generate. ✓ drawn, ✗ not drawn, ⊕ merged into another, X-shaft = claimed by X">Boundary</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                </div>
+
+                <div class="hidden" id="qaPanel" data-pane="Extraction QA">
+                    <p class="muted small">
+                        What happened to every label. Anything marked
+                        <code>no_walls</code> produced no boundary at all &mdash; that is
+                        usually why a floor comes out short.
+                    </p>
+                    <div id="qaSummary" class="summary"></div>
+                    <div class="download-row" style="margin-top:8px">
+                        <a id="qaDlXlsx" class="btn btn-accent" href="#" download>&#8595; QA report (Excel)</a>
+                        <a id="qaDlJson" class="btn btn-ghost" href="#" download>&#8595; QA report (JSON)</a>
+                    </div>
+                </div>
+
+                <div class="hidden" id="previewPanel" data-pane="Boundary preview">
+                    <p class="muted small">
+                        Straight from the annotated DXF. Drag to pan, scroll to
+                        zoom, hover a shape for its name and area. Click a family
+                        below to hide it.
+                    </p>
+                    <div class="actions" style="justify-content:flex-start;
+                                                align-items:center; margin:0 0 10px">
+                        <label class="muted small" for="previewMode">Show:</label>
+                        <select id="previewMode" class="unit-select">
+                            <option value="boundaries">Generated boundaries only</option>
+                            <option value="both">Drawing + generated boundaries</option>
+                        </select>
+                        <span class="muted small" id="previewModeNote"></span>
+                    </div>
+                    <div id="previewLegend" class="pv-legend"></div>
+                    <div class="pv-stage" id="previewStage">
+                        <div class="pv-tools">
+                            <button type="button" class="pv-btn" id="pvZoomIn"
+                                    title="Zoom in">+</button>
+                            <button type="button" class="pv-btn" id="pvZoomOut"
+                                    title="Zoom out">&minus;</button>
+                            <button type="button" class="pv-btn" id="pvFitRooms"
+                                    title="Fit the boundaries">Rooms</button>
+                            <button type="button" class="pv-btn" id="pvFitAll"
+                                    title="Fit everything including the floor outline">All</button>
+                            <button type="button" class="pv-btn" id="pvLabels"
+                                    title="Show or hide the room names">Labels</button>
+                        </div>
+                        <div class="pv-readout" id="previewReadout">
+                            <span class="muted small">Hover a boundary</span>
+                        </div>
+                        <div class="pv-loading hidden" id="previewLoading"
+                             role="status" aria-live="polite">
+                            <span class="pv-spinner" aria-hidden="true"></span>
+                            <span class="pv-loading-text"></span>
+                        </div>
+                        <div class="pv-canvas" id="previewCanvas"></div>
+                    </div>
+                    <div id="previewStats" class="muted small"
+                         style="margin-top:6px"></div>
+                </div>
+
+                </div><!-- /subpanes -->
+            </div>
+        </section>
+
+        <!-- Family rules editor -->
+        <section class="card" id="step-family-rules">
+            <div class="card-head">
+                <div class="step-no">&#9881;</div>
+                <h2>Family rules</h2>
+            </div>
+            <div class="card-body">
+                <p class="muted">
+                    Which text goes under which boundary layer. Put
+                    <code>LIFT LOBBY</code> under <b>Staircase</b> and it will be
+                    drawn on <code>STAIR_BOUNDARY</code> instead of
+                    <code>LIFT_BOUNDARY</code>. One keyword per line, matched
+                    whole-word and case-insensitively.
+                </p>
+                <p class="muted small">
+                    <b>Order decides ties.</b> Families are checked top to bottom
+                    and the first match wins, so a keyword listed under two
+                    families belongs to the higher one. Longer keywords should sit
+                    above the shorter ones they contain
+                    (<code>LIFT LOBBY</code> above <code>LIFT</code>).
+                    Saving applies immediately &mdash; re-run Step&nbsp;3 or
+                    Step&nbsp;4 to see the effect.
+                </p>
+
+                <div class="actions" style="justify-content:flex-start">
+                    <button class="btn btn-ghost" id="rulesToggleBtn"
+                            type="button">Show rules</button>
+                    <button class="btn btn-ghost" id="rulesAddBtn"
+                            type="button">+ Add family</button>
+                    <button class="btn btn-ghost" id="rulesReloadBtn"
+                            type="button">Discard changes</button>
+                    <button class="btn btn-primary" id="rulesSaveBtn"
+                            type="button">Save rules</button>
+                </div>
+                <div id="rulesWarning" class="status"></div>
+                <div id="rulesStatus" class="status"></div>
+                <div class="hidden" id="rulesEditor"></div>
+            </div>
+        </section>
+
+        <!-- STEP 4: upload corrected DXF and compute areas -->
+        <section class="card" id="step-areas">
+            <div class="card-head">
+                <div class="step-no">4</div>
+                <h2>Calculate areas from corrected DXF</h2>
+            </div>
+            <div class="card-body">
+                <p class="muted">
+                    After fixing boundaries in CAD (move polylines, delete unwanted ones,
+                    add missing rooms — all on the <code>ROOM_BOUNDARY</code> layer),
+                    upload the corrected DXF here. The system reads each closed
+                    polyline on <code>ROOM_BOUNDARY</code>, computes its area, and
+                    matches it to the nearest text label inside.
+                </p>
+
+                <div class="drop" id="areasDrop">
+                    <input type="file" id="areasFile" accept=".dxf" hidden />
+                    <div class="drop-inner">
+                        <div>
+                            <button type="button" class="btn btn-primary" id="areasPickBtn">Choose corrected DXF</button>
+                            <span class="muted">&nbsp; or drag &amp; drop here</span>
+                        </div>
+                        <div class="muted small">Boundaries must be closed polylines on the ROOM_BOUNDARY layer</div>
+                    </div>
+                </div>
+                <div class="actions" style="align-items:center; gap:10px; margin-top:12px">
+                    <label class="muted small" for="areasUnitSelect">Units the DXF was drawn in:</label>
+                    <select id="areasUnitSelect" class="unit-select"></select>
+                    <span class="muted small">Output is always sq.m and m.</span>
+                </div>
+                <div class="run-row">
+                    <span id="areasFileChosen" class="chosen-file">No file chosen yet</span>
+                    <button type="button" class="btn btn-primary btn-run" id="areasRunBtn" disabled
+                            title="Choose a DXF file first">&#9654; Run</button>
+                </div>
+                <div id="areasUploadStatus" class="status"></div>
+
+                <div class="hidden" id="areasLayerPicker">
+                    <p class="muted small" style="margin-top:14px">
+                        Select the layer that contains the floor outline (the largest
+                        closed polyline representing the floor itself):
+                    </p>
+                    <div class="actions" style="align-items:center; gap:10px">
+                        <select id="areasFloorLayer" style="min-width:240px; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; background:#fff"></select>
+                        <button class="btn btn-primary" id="areasCalcBtn">Calculate areas</button>
+                    </div>
+                    <div id="areasCalcStatus" class="status"></div>
+                </div>
+
+                <div class="hidden" id="areasResults">
+                    <div class="download-row" style="margin:14px 0 10px">
+                        <a id="areasDlXlsx" class="btn btn-accent" href="#" download>&#8595; Download Excel</a>
+                        <a id="areasDlJson" class="btn btn-ghost" href="#" download>&#8595; Download JSON</a>
+                        <a id="areasDlStatement" class="btn btn-accent" href="#" download title="Floor-by-floor, tower-wise area statement">&#8595; Download Area Statement</a>
+                        <a id="qtyDlXlsx" class="btn btn-accent" href="#" download>&#8595; Quantities &amp; checks (Excel)</a>
+                        <a id="qtyDlJson" class="btn btn-ghost" href="#" download>&#8595; Quantities (JSON)</a>
+                    </div>
+
+                    <div class="subtabs" data-subtabs="step4"></div>
+                    <div class="subpanes" data-subpanes="step4">
+
+                    <div data-pane="Room areas" id="areasRoomsPane">
+                    <table class="grid" id="floorAreaTable">
+                        <thead>
+                            <tr>
+                                <th>Floor</th>
+                                <th style="width:160px">Area (sq.m)</th>
+                                <th style="width:160px">Perimeter (m)</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                    <div class="table-wrap" style="margin-top:14px">
+                        <table class="grid" id="roomAreasTable">
+                            <thead>
+                                <tr>
+                                    <th style="width:70px">Sr.No</th>
+                                    <th>Room Name</th>
+                                    <th style="width:130px">Area (sq.m)</th>
+                                    <th style="width:130px">Perimeter (m)</th>
+                                    <th style="width:150px">Family</th>
+                                    <th style="width:140px">Floor</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    </div>
+
+                    <div data-pane="By family">
+                        <p class="muted small">
+                            Rooms grouped by family with subtotals. Change which
+                            text lands in which family under <b>Family rules</b>.
+                        </p>
+                        <div id="familyGroups"></div>
+                    </div>
+
+                    <div data-pane="Drawing" id="areasCadPane">
+                        <p class="muted small cad-hint">
+                            The corrected drawing with every room boundary it holds. Hover a
+                            room for its name, family and area; click a room to find it in
+                            the Room areas table.
+                        </p>
+                        <div id="cadAreas"></div>
+                    </div>
+
+                    <div data-pane="Quantities &amp; checks">
+                        <p class="muted small">
+                            Computed from this drawing with no extra input. Rates and
+                            rules come from <code>config.json</code>.
+                        </p>
+                        <div id="quantityPanels"></div>
+                    </div>
+
+                    </div><!-- /subpanes -->
+                </div>
+            </div>
+        </section>
+
+        <!-- STEP 5: revision comparison -->
+        <section class="card" id="step-compare">
+            <div class="card-head">
+                <div class="step-no">5</div>
+                <h2>Compare two revisions</h2>
+            </div>
+            <div class="card-body">
+                <p class="muted">
+                    See what changed between two drawing revisions: rooms added,
+                    rooms removed, and the area delta per room. Each side can be
+                    whichever form that revision exists in &mdash; the areas
+                    <b>JSON</b>, the areas <b>Excel</b> workbook, or a corrected
+                    <b>DXF</b>. A DXF is measured on the spot, picking the
+                    floor-outline layer automatically.
+                </p>
+                <div class="cmp-side">
+                    <label class="muted small"><b>Previous revision</b>
+                        <input type="file" id="cmpPrev" accept=".json,.xlsx,.xlsm,.dxf" />
+                    </label>
+                    <span class="hidden" id="cmpPrevOpts">
+                        <select id="cmpPrevUnits" class="unit-select"></select>
+                        <input type="text" id="cmpPrevLayer" class="layer-input"
+                               placeholder="Floor layer (blank = auto)" />
+                    </span>
+                </div>
+                <div class="cmp-side">
+                    <label class="muted small"><b>Current revision</b>
+                        <input type="file" id="cmpCurr" accept=".json,.xlsx,.xlsm,.dxf" />
+                    </label>
+                    <span class="hidden" id="cmpCurrOpts">
+                        <select id="cmpCurrUnits" class="unit-select"></select>
+                        <input type="text" id="cmpCurrLayer" class="layer-input"
+                               placeholder="Floor layer (blank = auto)" />
+                    </span>
+                </div>
+                <div class="actions" style="margin-top:10px">
+                    <button class="btn btn-primary" id="cmpBtn">Compare</button>
+                </div>
+                <div id="cmpStatus" class="status"></div>
+                <div class="hidden" id="cmpResults">
+                    <div class="download-row" style="margin:10px 0">
+                        <a id="cmpDlXlsx" class="btn btn-accent" href="#" download>&#8595; Comparison (Excel)</a>
+                        <a id="cmpDlJson" class="btn btn-ghost" href="#" download>&#8595; Comparison (JSON)</a>
+                    </div>
+                    <div id="cmpSummary" class="summary"></div>
+                    <div id="cmpTables"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- STEP 6: the drawing's own layers -->
+        <!-- data-quiet: this fills itself in from the Step 1 upload, so it
+             must not pull the user out of the step they are working in. -->
+        <section class="card hidden" id="step-layers" data-quiet="1">
+            <div class="card-head">
+                <div class="step-no">6</div>
+                <h2>Drawing layers</h2>
+            </div>
+            <div class="card-body">
+                <p class="muted">
+                    Every layer in the uploaded DXF, read in Step&nbsp;1 and
+                    grouped the way rooms are: a layer whose name matches a
+                    family keyword joins that family, and the rest fall in
+                    behind the discipline letter they start with
+                    (<code>A-</code> architectural, <code>S-</code> structural,
+                    <code>M-</code> mechanical, and so on).
+                    <b>Counts as wall</b> is the one to read when a boundary
+                    comes out wrong: it says whether the boundary generator
+                    treats that layer's linework as a wall. Change that in
+                    <code>walls</code> in <code>config.json</code>.
+                </p>
+
+                <div class="download-row" id="layersDownloads">
+                    <a id="layersDlXlsx" class="btn btn-accent" href="#"
+                       download>&#8595; Download Excel</a>
+                    <a id="layersDlJson" class="btn btn-ghost" href="#"
+                       download>&#8595; Download JSON</a>
+                </div>
+
+                <div class="summary" id="layersSummary"></div>
+                <div class="actions" style="justify-content:flex-start;
+                                            align-items:center; margin:4px 0 0">
+                    <label class="muted small" for="layersFilter">Filter:</label>
+                    <input id="layersFilter" class="unit-select" type="search"
+                           placeholder="layer name, family or discipline"
+                           style="min-width:260px" />
+                    <button type="button" class="btn btn-ghost"
+                            id="layersEmptyBtn">Hide empty layers</button>
+                </div>
+                <div id="layersStatus" class="status"></div>
+                <div id="layersGroups" class="layer-groups"></div>
+            </div>
+        </section>
+
+        <!-- Built-in rules: the judgements the drawing pass makes. -->
+        <section class="card" id="step-myrules">
+            <div class="card-head">
+                <div class="step-no">&#9776;</div>
+                <h2>Built-in rules</h2>
+            </div>
+            <div class="card-body">
+                <!-- The rules the drawing pass applies. Populated from the
+                     server so the list cannot drift from the code. -->
+                <div id="rulesPanel">
+                    <p class="muted small" style="margin:0 0 8px">
+                        These are the judgements made while drawing: that an
+                        X crossing marks a shaft, that a fill escaping its
+                        room should be distrusted, that a fire-hose tag is
+                        equipment and not a room. Untick one and it is not
+                        applied the next time you press <b>Generate
+                        Boundaries</b> in Step&nbsp;3. Ticks are not saved:
+                        refreshing the page puts every rule back to its
+                        default. Hover a rule for what turning it off costs.
+                    </p>
+                    <div class="actions" style="justify-content:flex-start;
+                                                margin:0 0 10px">
+                        <button type="button" class="btn btn-ghost"
+                                id="rulesAllOn">Tick all</button>
+                        <button type="button" class="btn btn-ghost"
+                                id="rulesAllOff">Untick all</button>
+                        <button type="button" class="btn btn-ghost"
+                                id="rulesReset">Back to defaults</button>
+                        <span class="muted small" id="rulesPanelCount"></span>
+                    </div>
+                    <div id="rulesPanelBody" class="rule-cats"></div>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- Core module checklist -->
+        <section class="card" id="step-modules">
+            <div class="card-head">
+                <div class="step-no">&#10003;</div>
+                <h2>Core modules</h2>
+            </div>
+            <div class="card-body">
+                <p class="muted">
+                    Tick each module as you complete it. Ticks are saved in this
+                    browser, so they survive a reload.
+                </p>
+                <div class="check-list" id="moduleList">
+                    <label class="check-item">
+                        <input type="checkbox" class="modchk" data-mod="pline" />
+                        <span class="check-text">
+                            <b>Polyline (Pline) creation</b>
+                            <span class="muted small">
+                                Create closed, editable polylines from user input or
+                                existing linework to serve as the base geometry for
+                                all calculations.
+                            </span>
+                        </span>
+                    </label>
+                    <label class="check-item">
+                        <input type="checkbox" class="modchk" data-mod="area" />
+                        <span class="check-text">
+                            <b>Area calculation from polyline</b>
+                            <span class="muted small">
+                                Accurately compute area from closed polylines,
+                                considering units, scale, and drawing precision.
+                            </span>
+                        </span>
+                    </label>
+                    <label class="check-item">
+                        <input type="checkbox" class="modchk" data-mod="perimeter" />
+                        <span class="check-text">
+                            <b>Perimeter calculation</b>
+                            <span class="muted small">
+                                Calculate the total boundary length of closed or open
+                                polylines for quantity and fa&ccedil;ade-related use.
+                            </span>
+                        </span>
+                    </label>
+                    <label class="check-item">
+                        <input type="checkbox" class="modchk" data-mod="facade" />
+                        <span class="check-text">
+                            <b>Fa&ccedil;ade area calculation</b>
+                            <span class="muted small">
+                                Derive fa&ccedil;ade surface area using perimeter,
+                                height inputs, and floor count logic.
+                            </span>
+                        </span>
+                    </label>
+                </div>
+                <div id="moduleProgress" class="status"></div>
+            </div>
+        </section>
+
+    </main>
+
+    <footer class="foot">
+        <span class="muted small">Drawing_Analyzer &middot; Flask + ezdxf</span>
+    </footer>
+
+    <script src="{{ url_for('static', filename='main.js') }}"></script>
+    <script src="{{ url_for('static', filename='quantities.js') }}"></script>
+    <script src="{{ url_for('static', filename='preview.js') }}"></script>
+    <script src="{{ url_for('static', filename='layers.js') }}"></script>
+    <script src="{{ url_for('static', filename='boundaryrules.js') }}"></script>
+    <script src="{{ url_for('static', filename='viewer.js') }}"></script>
+    <script src="{{ url_for('static', filename='layout.js') }}"></script>
+    <script src="{{ url_for('static', filename='cadview.js') }}"></script>
+    <script src="{{ url_for('static', filename='cadsteps.js') }}"></script>
+</body>
+</html>

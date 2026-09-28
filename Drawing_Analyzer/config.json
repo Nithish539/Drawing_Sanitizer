@@ -1,0 +1,404 @@
+{
+  "_comment": "Tuning thresholds, previously hard-coded as constants in dxf_reader.py. All distances are in MILLIMETRES and are applied after the drawing has been normalised to mm via $INSUNITS, so they hold regardless of the units the drawing was authored in. Edit and restart the app - no code change needed. Any key omitted here falls back to the built-in default.",
+  "floor_detection": {
+    "min_floor_area_sqm": 2000.0,
+    "_min_floor_area_sqm_note": "Lower this for villas, small offices and single-floor plans. Set to 0 to accept every closed polyline.",
+    "excluded_layers": [
+      "A-ELEV SYMBOL",
+      "ROOM_LABEL"
+    ]
+  },
+  "boundary": {
+    "max_hv_search_mm": 20000.0,
+    "max_room_sqm": 1000.0,
+    "max_leaked_raycast_sqm": 60.0,
+    "_max_leaked_raycast_sqm_note": "Ceiling on a boundary that the flood fill could not verify. When the fill leaks, the walls do not enclose the label and the four-ray box is only a guess - keeping a modest one covers a fill that escaped through a single doorway, while a large one is a label standing in open floor claiming a slab of the plate. Raise it if a large room disappears; lower it if tags in open floor are claiming rooms. At 30 it was deleting real rooms: a women's toilet measures 51.7 sq.m by rays on the typical-floor plate, and two staircases 39.5. The junk it has to stop on the other test plate runs 90 sq.m and up. Only applies where tracing is on and leaked; a traced room is capped by max_room_sqm instead.",
+    "trace_max_vs_box_ratio": 3.0,
+    "_trace_max_vs_box_ratio_note": "A flood fill more than this many times larger than the four-ray box around its label, AND holding the name of a room of another family, has escaped its room through a gap; the boundary falls back to the box. Size alone is not enough now that only real walls count: a toilet with cubicle banks traces to 7-8 times the box from its label. The original case - an AHU room whose fill escaped at 9.6 times, 191 sq.m, swallowing the staircases beside it - holds staircase names and is still caught.",
+    "min_boundary_side_mm": 200.0,
+    "overlap_merge_ratio": 0.7,
+    "overlap_merge_min_size_ratio": 0.5,
+    "_overlap_merge_min_size_ratio_note": "Two boundaries only merge when the smaller is at least this share of the larger. Overlap is measured against the smaller of the two, so a small room standing inside a large one scores a perfect 1.0 and used to be merged with it - which is containment, not duplication. That is how an AHU room of 19.8 sq.m came out as a 167 sq.m rectangle carrying the AHU name over its neighbours. Two boundaries that really describe the same room come out close in size.",
+    "engulf_reject_ratio": 1.5,
+    "engulf_min_rooms": 2,
+    "_engulf_reject_ratio_note": "Reject a boundary that contains the centre of one already drawn and is at least this many times its size. Rooms do not nest, so a boundary holding another room is a fill that leaked through an opening and came back wrapping its neighbours - one boundary around an AHU room, a service lift and a hose cabinet together.",
+    "method": "trace",
+    "_method_note": "'trace' flood-fills the real enclosed region, so angled, curved and L-shaped rooms are measured correctly. 'raycast' is the older four-ray bounding box. Tracing falls back to raycast automatically whenever a fill leaks through a gap in the walls.",
+    "seal_openings_mm": 100.0,
+    "_seal_openings_mm_note": "Gaps up to this wide in the wall linework are closed before the flood fill runs. This is only for drafting gaps where two wall lines almost meet. Door openings are closed by door swings (see doors), not by this. It used to be 900, which also sealed every WC cubicle entrance and every opening under 900 mm inside a room, so toilets were measured to the cubicle fronts instead of the wall behind them.",
+    "trace_cell_mm": 50.0,
+    "_trace_cell_mm_note": "Grid resolution for tracing. Straight walls are snapped back onto the real wall line so they stay exact; this figure only bounds the accuracy of curved runs. 25 mm roughly halves the curve error and roughly quadruples the memory.",
+    "trace_simplify_cells": 1.2,
+    "thick_lineweight_threshold": 40,
+    "wall_axis_ratio": 6.0,
+    "_wall_axis_ratio_note": "A segment counts as axis-aligned when its long axis is at least this many times its short axis. 6.0 is about 9.5 degrees.",
+    "spatial_index_band_mm": 2000.0
+  },
+  "doors": {
+    "insert_radius_mm": 1500.0,
+    "gap_min_mm": 300.0,
+    "gap_max_mm": 2000.0,
+    "_gap_mm_note": "Door-schedule gap search, and the width range for closing a wall-run gap with no door in it (only when the 'Close gaps cut in a wall run' rule is ticked).",
+    "opening_keywords": ["DOOR", "WINDOW", "GLAZ"],
+    "_opening_keywords_note": "Arcs and straight lines on a layer, or inside a block, whose name contains one of these are door or window evidence. A window closes its opening the same way a door does. An arc's centre is the hinge and its radius the leaf width; a straight door line (a leaf panel or a threshold) has a hinge at either end and its length as the width. An opening is closed only where such a hinge stands at one end of it and the width matches the gap.",
+    "swing_radius_min_mm": 300.0,
+    "swing_radius_max_mm": 1400.0,
+    "hinge_tol_mm": 250.0,
+    "_hinge_tol_mm_note": "How far a swing's hinge may stand from the wall end at the side of the opening.",
+    "bridge_min_mm": 500.0,
+    "bridge_max_mm": 2600.0,
+    "_bridge_mm_note": "Width range of a door opening that is closed straight across. 2600 covers a double door of two 1200 mm leaves plus frames."
+  },
+  "x_marks": {
+    "diag_min_len_mm": 80.0,
+    "diag_max_len_mm": 5000.0,
+    "diag_min_axis_mm": 60.0,
+    "pair_midpoint_tol_mm": 100.0,
+    "pair_length_tol": 0.25,
+    "cluster_gap_mm": 450.0,
+    "text_radius_mm": 2500.0,
+    "text_gap_mm": 1000.0,
+    "_text_gap_mm_note": "How far outside an X-mark its label may stand, measured to the edge of the X rather than to its centre. A text inside the X always names it. Raise this where labels sit at the end of long leaders; lower it if labels are being pulled onto the wrong shaft. An X left with no label of its own is drawn on UNKNOWN_BOUNDARY.",
+    "enclosure_max_sqm": 20.0,
+    "enclosure_snap_margin_mm": 250.0,
+    "_enclosure_snap_margin_mm_note": "An X-mark is drawn corner to corner of the shaft it marks, so the X IS the shaft. The boundary is the X's own extent, and the walls around it are used only when they hug it: every side of the wall enclosure within this many mm of the X. That is the same opening measured to the wall face. A looser enclosure belongs to the room the shaft stands in, not to the shaft - it was giving a toilet vent 11.28 sq.m in place of 3.30, and an AHU shaft 6.46 in place of 1.73.",
+    "fallback_min_sqm": 0.05,
+    "_fallback_min_sqm_note": "Smallest X-mark that still earns a boundary. Service shafts are routinely 300 mm deep - FHC-1 SHAFT is 800 x 300 - so a floor of 0.5 sq.m threw 49 real shafts away and left their labels to be sized by ray-casting instead, which is what drew them several times too large."
+  },
+  "layer_disciplines": {
+    "_comment": "Section 6 groups layers a family keyword does not recognise by the discipline letter their name starts with, per the AIA CAD layer convention. Only a single leading letter is read - 'ST-SLAB LINE' is stairs, not structural - so add or rename entries here to match your office's convention. Anything with no single-letter prefix is grouped under 'Other layers'.",
+    "A": "Architectural", "C": "Civil", "E": "Electrical",
+    "F": "Fire protection", "G": "General", "H": "Hazardous materials",
+    "I": "Interiors", "L": "Landscape", "M": "Mechanical", "P": "Plumbing",
+    "Q": "Equipment", "R": "Resource", "S": "Structural",
+    "T": "Telecommunications", "V": "Survey", "W": "Distribution",
+    "X": "Other disciplines", "Z": "Contractor"
+  },
+  "walls": {
+    "_comment": "Which layers count as walls. Keyword match, case-insensitive, on the layer name. 'never_walls' are not walls at all - annotation, dimensions, furniture; 'exclude_from_thick' are kept out of the thick-wall tier only. Leave either list out to use the program's own defaults. This is where to send a layer that is cutting rooms in half: on the test plate the toilets are divided by the vanity counter on Q-CASE and by the sanitary fixtures on P-SANR-FIXT, both of which a flood fill treats as walls because they are continuous lines like any other.",
+    "_never_walls_note": "HVAC COMMENT used to be in this list. On the typical-floor test plate that layer carries the outer walls of both women's toilets, so they had no wall on one side. Add it back if your drawings use it for duct outlines.",
+    "never_walls": ["DIM", "DIMENSION", "FURN", "FURNITURE", "TEXT", "ANNO", "NOTE", "GRID", "HATCH", "ELEV SYMBOL", "BREAKLINE", "SECTSYMBOL", "FIRESGN", "FIRESIGN", "PHOENIX", "TILE DROP", "LIFT SPECS", "UP DIRECTION", "LEADER", "MARK", "CENTRE", "CENTER"],
+    "thickness_min_mm": 80.0,
+    "thickness_max_mm": 400.0,
+    "_thickness_note": "A wall is two parallel lines this far apart that run alongside each other, on any layer not in never_walls. Single lines - WC cubicle partitions, urinal screens, counter edges, centre lines - are not walls, so a room runs past them to the wall behind.",
+    "min_face_mm": 200.0,
+    "panel_max_mm": 60.0,
+    "_panel_max_mm_note": "Two lines of similar length closer than this are a panel - a door leaf, a partition board - not a wall.",
+    "parallel_tol_deg": 1.5,
+    "always_walls": ["WALL", "RCC", "SLIP FORM", "COLUMN", "COL-", "-COL", "SHEAR", "CONC", "STRUCT", "UPSTAND", "CUTOUT"],
+    "_always_walls_note": "Any line on a layer containing one of these is a wall whatever its thickness. RCC cores and shear walls are often 300-1000 mm thick, past any thickness test. UPSTAND and CUTOUT are here because pipe shafts inside AHU rooms are outlined by an upstand kerb or a slab cutout, not a wall; without them the shaft labels were absorbed into the AHU room. The diagonals of an X-mark never count, whatever their layer.",
+    "exclude_from_thick": ["STAIR", "RAILING", "CUTOUT", "ST-SLAB LINE", "DEFPOINTS"]
+  },
+  "curves": {
+    "sagitta_tolerance_mm": 5.0,
+    "_sagitta_tolerance_mm_note": "Maximum chord deviation when flattening arcs and polyline bulges into line segments. Smaller is more accurate and slower.",
+    "max_segments_per_arc": 64
+  },
+  "annotation": {
+    "layer": "ROOM_BOUNDARY",
+    "color": 2,
+    "text_height_mm": 150.0,
+    "block_recursion_depth": 3,
+    "_block_recursion_depth_note": "How many INSERT levels to descend when collecting text and geometry. Was fixed at 1; production drawings routinely nest three or four deep.",
+    "hatch": true,
+    "hatch_transparency": 0.0,
+    "_hatch_note": "Fill every drawn boundary with a solid hatch in its family colour, on the same layer as the outline. The hatch is associative (it follows the outline when the boundary is edited in CAD), leaves voids open, and is sent to the back so walls and texts stay readable. hatch_transparency runs 0 (solid) to 0.9. Set hatch to false for outlines only. Step 4 reads only the outlines, never the hatch."
+  },
+  "label_filters": {
+    "_comment": "Which texts can name a room. 'ignore_patterns' are never room names at all (dimensions, levels, UP/DN). 'device_tag_patterns' are equipment tags - they can still label a boundary if nothing better is inside it, but they lose to any text that matches a family keyword. This is what stopped the tag INID04 outranking the room name PRESS. Patterns are case-insensitive regexes matched against the whole text.",
+    "device_tag_patterns": [
+      "^[A-Z]{1,4}[-\\s]?\\d{1,3}[A-Z]?$",
+      "^[A-Z]{1,5}\\d{2,}[A-Z]?$",
+      "^[A-Z]{1,4}[-\\s]?\\d+[-\\s]?\\d+$"
+    ],
+    "max_room_name_chars": 28,
+    "_max_room_name_chars_note": "Longer than this and the text is a drawing note, not a room name - judged before the family keywords, because a sentence like 'FOR DETAILS OF STAIRCASE-01 REFER DRG' contains STAIRCASE and was being ranked as a room. Raise it if a project genuinely uses long room names.",
+    "_equipment_tags_note": "Devices drawn on the plan that are also family keywords, so every other test reads them as room names and gives them a boundary of their own - a fire hose reel on a toilet wall was taking half the toilet. Matched as whole strings, so 'FHC' is a cabinet while 'FHC ROOM' is still a room. They can still title an X-marked shaft that holds nothing better.",
+    "equipment_tags": [
+      "FHC",
+      "FHR",
+      "FACP",
+      "FAPA",
+      "PA RACK",
+      "PA & FA",
+      "VANITY COUNTER",
+      "TEN",
+      "FCP",
+      "DGCP",
+      "FCU",
+      "RWP",
+      "OWC",
+      "TB",
+      "EWC",
+      "IWC",
+      "WB",
+      "HF",
+      "TPH",
+      "UR"
+    ],
+    "_fixture_layers_note": "Text on a layer whose name contains one of these is a label on a sanitary fixture or fitting (TB, EWC, WB, HF, TPH...) and is never a room name, whatever it says. On A-109 the second tower's fixture blocks carry about 150 such labels and the first tower's carry none: read as room names they took the toilets apart into TB and EWC boxes and left the toilet's own name without a room. Matched anywhere in the layer name, case-insensitive.",
+    "fixture_layers": [
+      "FIXTURE",
+      "FIXT",
+      "SAN-FIX",
+      "SAN_FIX",
+      "SANITARY",
+      "SANR"
+    ],
+    "ignore_patterns": [
+      "^\\d+(\\.\\d+)?\\s*(MM|CM|M|MTR|SQM|SQ\\.?M)?$",
+      "^[+\\-]?\\d+(\\.\\d+)?\\s*(FFL|SSL|FL|LVL)\\b",
+      "^(UP|DN|DOWN|NTS|TYP|REF|DIA|THK|CLR|BELOW|ABOVE)\\.?$",
+      "^R\\d+$",
+      "^\\d+\\s*[xX]\\s*\\d+$",
+      "^\\d+\\s*MM\\b.*\\(\\s*[WH]\\s*\\).*$",
+      "^\\d+\\s*MM\\s+SUNK$",
+      "^(NOTE|DATE|SIGN|SCALE|REV|DRAWN|CHECKED|APPROVED)\\s*:?$",
+      "^\\d{1,2}-\\d{1,2}-\\d{2,4}$",
+      "^(TOWER|PHASE|BLOCK)[-\\s]?\\d+$"
+    ]
+  },
+  "quantities": {
+    "core_families": [
+      "Shaft",
+      "Lift",
+      "Staircase"
+    ],
+    "_core_families_note": "Used for the core-efficiency KPI and deducted from the net deck-sheet area.",
+    "deck_sheet_deduct_families": [
+      "Shaft",
+      "Lift",
+      "Staircase"
+    ],
+    "studs_per_sqm": 9.0,
+    "_studs_per_sqm_note": "Given in the module brief as a fixed rate, so it is a constant rather than a user input.",
+    "duplicate_area_tolerance_sqm": 0.02,
+    "overlap_flag_ratio": 0.1,
+    "_overlap_flag_ratio_note": "Room pairs overlapping by at least this much, but below overlap_merge_ratio, are reported as suspect rather than merged.",
+    "sliver_max_sqm": 0.5,
+    "sliver_max_aspect": 12.0
+  },
+  "linear_quantities": {
+    "_comment": "Layer-name keyword rules for grouping polyline run lengths by discipline. Same shape as family_rules.json: case-insensitive substring match, first hit wins.",
+    "disciplines": [
+      {
+        "name": "Cable Tray",
+        "keywords": [
+          "CABLE TRAY",
+          "CBL TRAY",
+          "TRAY",
+          "CABLETRAY"
+        ]
+      },
+      {
+        "name": "Cable / Wiring",
+        "keywords": [
+          "CABLE",
+          "WIRE",
+          "WIRING",
+          "CONDUIT"
+        ]
+      },
+      {
+        "name": "HVAC Duct",
+        "keywords": [
+          "DUCT",
+          "SA-DUCT",
+          "RA-DUCT",
+          "EA-DUCT",
+          "SUPPLY AIR",
+          "RETURN AIR",
+          "EXHAUST AIR"
+        ]
+      },
+      {
+        "name": "Chilled Water",
+        "keywords": [
+          "CHW",
+          "CHILLED WATER"
+        ]
+      },
+      {
+        "name": "Condenser Water",
+        "keywords": [
+          "CDW",
+          "CONDENSER WATER"
+        ]
+      },
+      {
+        "name": "Fire Piping",
+        "keywords": [
+          "SPRINKLER",
+          "HYDRANT",
+          "FIRE PIPE",
+          "FIRE-PIPE",
+          "FH-",
+          "FIRE LINE"
+        ]
+      },
+      {
+        "name": "Plumbing - Water",
+        "keywords": [
+          "DOMESTIC WATER",
+          "FLUSHING",
+          "CW-",
+          "HW-",
+          "WATER LINE",
+          "WATER PIPE"
+        ]
+      },
+      {
+        "name": "Plumbing - Drain",
+        "keywords": [
+          "SOIL",
+          "WASTE",
+          "DRAIN",
+          "VENT",
+          "SEWER",
+          "STORM"
+        ]
+      },
+      {
+        "name": "Wall",
+        "keywords": [
+          "WALL",
+          "-WAL",
+          "BRICK",
+          "BLOCKWORK",
+          "PARTITION"
+        ]
+      },
+      {
+        "name": "Grid",
+        "keywords": [
+          "GRID"
+        ]
+      },
+      {
+        "name": "Road / Kerb",
+        "keywords": [
+          "ROAD",
+          "KERB",
+          "CURB",
+          "DRIVEWAY",
+          "PAVE"
+        ]
+      }
+    ]
+  },
+  "block_inventory": {
+    "_comment": "Keyword rules for classifying INSERT block names into countable categories. Produces the raw inventory for fixture, sprinkler and door/window counting.",
+    "categories": [
+      {
+        "name": "Door",
+        "keywords": [
+          "DOOR",
+          "DR-",
+          "-DR",
+          "SHUTTER",
+          "D_TYPE"
+        ]
+      },
+      {
+        "name": "Window",
+        "keywords": [
+          "WINDOW",
+          "WIN-",
+          "-WIN",
+          "GLAZ",
+          "W_TYPE"
+        ]
+      },
+      {
+        "name": "Sprinkler",
+        "keywords": [
+          "SPRINKLER",
+          "SPRK",
+          "SPR-"
+        ]
+      },
+      {
+        "name": "Fire Equipment",
+        "keywords": [
+          "FHC",
+          "FHR",
+          "HYDRANT",
+          "EXTINGUISH",
+          "FIRE ALARM",
+          "SMOKE DET",
+          "HOOTER"
+        ]
+      },
+      {
+        "name": "Lighting Fixture",
+        "keywords": [
+          "LIGHT",
+          "LUMINAIRE",
+          "LAMP",
+          "LTG",
+          "FIXTURE-L",
+          "DOWNLIGHT"
+        ]
+      },
+      {
+        "name": "Electrical Point",
+        "keywords": [
+          "SOCKET",
+          "SWITCH",
+          "DB-",
+          "PANEL",
+          "JUNCTION",
+          "POWER POINT"
+        ]
+      },
+      {
+        "name": "Plumbing Fixture",
+        "keywords": [
+          "WC",
+          "WASH BASIN",
+          "WASHBASIN",
+          "URINAL",
+          "SINK",
+          "FLOOR TRAP",
+          "FT-",
+          "CLEANOUT"
+        ]
+      },
+      {
+        "name": "HVAC Terminal",
+        "keywords": [
+          "DIFFUSER",
+          "GRILLE",
+          "GRILL",
+          "FCU",
+          "VAV",
+          "AHU"
+        ]
+      },
+      {
+        "name": "Furniture",
+        "keywords": [
+          "CHAIR",
+          "TABLE",
+          "DESK",
+          "SOFA",
+          "WORKSTATION",
+          "CABINET"
+        ]
+      },
+      {
+        "name": "Parking",
+        "keywords": [
+          "PARK",
+          "CAR-",
+          "ECS"
+        ]
+      }
+    ]
+  },
+  "area_statement": {
+    "_note": "Download Area Statement (Step 4). Sale area = plinth area / sale_area_factor, and sq.ft = sq.m x sqft_per_sqm, as in the Phoenix-14 reference sheet. Which statement column each room goes to is decided by name, then family, by the rules in area_statement.py; to change them, add a 'rules' list here in the same form (column, any, not, families) and it replaces the built-in list.",
+    "sale_area_factor": 0.745,
+    "sqft_per_sqm": 10.764
+  }
+}
