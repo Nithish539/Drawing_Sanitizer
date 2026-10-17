@@ -1,0 +1,59 @@
+{
+  "_notes": [
+    "The column size library: the fallback of the column finder (geoengine._column_shapes). Edit this file to add sizes; no code change is needed. Restart the app after editing it.",
+    "The finder works in three tiers. 1: the floor's column group standing on a grid (unchanged). 2: other drawn closed shapes with column evidence - on a column layer, or this floor's own column size on a crossing of its grid. 3: a drawn closed shape whose size is in this library, hatched, standing alone (no wall runs into it) and on a crossing of the floor's grid (any place when the floor has no grid). A hatched library size touching walls or off the grid is only marked on AI_REVIEW; an unhatched one is left alone. A block's box alone (INSERT) is never taken by tiers 2 and 3.",
+    "Sizes in mm, matched either way round. A rectangle is [a, b]; a round column (rcc_round, steel CHS) is its diameter.",
+    "match_order: where a size is looked up; the first match names the column. project: the lists under projects whose match words are in the drawing's file name or project name (a project with no match words always applies). floor_confirmed: the sizes of the columns tier 1 found on this floor. RCC is looked up before steel, so a 400 mm square reads RCC 400x400, not SHS 400; a steel size not on the RCC list still reads as steel.",
+    "tolerance: [mm, share] - a size matches within the larger of the two (share x the size).",
+    "limits: the shapes tiers 2 and 3 look at at all (shorter side, longer side, longer / shorter). Tier 1 keeps its own limits.",
+    "not_column_layer_words: a shape drawn on a layer with one of these words in its name (or on a wall layer) is never a column by the library or by the floor's own size. A shape on a column layer (COLUMN, _COL, COL-, PILLAR ...) is taken whatever its size.",
+    "steel: IS 808 ISHB / ISWB / ISMB as [depth, flange width]; SHS (IS 4923) side; CHS outside diameter. imported: HE-A / HE-B (EN 10365) and UC (BS 4) as depth d x flange width b."
+  ],
+  "enabled": true,
+  "version": 1,
+  "units": "mm",
+  "limits": {"min_side_mm": 150, "max_side_mm": 1500, "max_aspect": 4.0},
+  "tolerance": {
+    "project": [15, 0.02],
+    "floor_confirmed": [15, 0.02],
+    "steel": [3, 0],
+    "imported": [10, 0],
+    "rcc": [10, 0.02],
+    "round": [10, 0.02]
+  },
+  "match_order": ["project", "floor_confirmed", "rcc", "steel", "imported"],
+  "not_column_layer_words": ["CUT", "SHAFT", "DUCT", "VOID", "GLASS", "GLAZ", "WIN", "LOUV", "FRAM", "DOOR",
+                             "ELEV", "SECT", "SCHED", "PLUMB", "SANIT", "FITMENT", "TOILET", "LIFT", "STAIR",
+                             "REV", "CLOUD", "HIDD", "HIDN", "THIN", "CEN", "BLOCK", "HVAC", "MECH", "ELEC",
+                             "LIGHT", "LTG", "FIRE", "SPRINK", "DRAIN", "PIPE", "EQUIP", "EQPM", "FURN", "TEXT",
+                             "ANNO", "DIM", "TAG", "GRID", "SYMB"],
+  "projects": {
+    "XA": {"match": ["XA"], "type": "Composite",
+           "sizes": [[555, 555], [705, 705], [940, 945], [1140, 1150], [1140, 1340]]},
+    "Centaurus": {"match": ["CENTAURUS"], "type": "RCC",
+                  "sizes": [[575, 575], [668, 668], [750, 750], [768, 768], [810, 810]]}
+  },
+  "rcc_rect": [[200, 200], [230, 230], [230, 300], [230, 380], [230, 400], [230, 450], [230, 600],
+               [250, 250], [300, 300], [300, 450], [300, 600], [350, 350], [400, 400], [450, 450],
+               [450, 600], [500, 500], [600, 600], [600, 900], [750, 750], [900, 900],
+               [1000, 1000], [1200, 1200]],
+  "rcc_round": [300, 350, 400, 450, 500, 600, 750, 900],
+  "steel": {
+    "ISHB": [[150, 150], [200, 200], [225, 225], [250, 250], [300, 250], [350, 250], [400, 250], [450, 250]],
+    "ISWB": [[150, 100], [175, 125], [200, 140], [225, 150], [250, 200], [300, 200], [350, 200], [400, 200],
+             [450, 200], [500, 250], [550, 250], [600, 250]],
+    "ISMB": [[100, 75], [125, 75], [150, 80], [175, 90], [200, 100], [225, 110], [250, 125], [300, 140],
+             [350, 140], [400, 140], [450, 150], [500, 180], [550, 190], [600, 210]],
+    "SHS": [100, 113.5, 132, 150, 180, 200, 250, 300, 350, 400],
+    "CHS": [114.3, 139.7, 165.1, 168.3, 219.1, 273, 323.9, 355.6, 406.4, 457, 508]
+  },
+  "imported": [
+    {"name": "HE 200 A", "d": 190, "b": 200}, {"name": "HE 300 A", "d": 290, "b": 300},
+    {"name": "HE 400 A", "d": 390, "b": 300}, {"name": "HE 200 B", "d": 200, "b": 200},
+    {"name": "HE 240 B", "d": 240, "b": 240}, {"name": "HE 300 B", "d": 300, "b": 300},
+    {"name": "HE 340 B", "d": 340, "b": 300}, {"name": "HE 400 B", "d": 400, "b": 300},
+    {"name": "UC 152", "d": 152, "b": 152}, {"name": "UC 203", "d": 203, "b": 203},
+    {"name": "UC 254", "d": 254, "b": 254}, {"name": "UC 305", "d": 305, "b": 305},
+    {"name": "UC 356", "d": 356, "b": 368}
+  ]
+}

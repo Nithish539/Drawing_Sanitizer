@@ -8384,20 +8384,30 @@ def _run_floor_passes(jobs):
 
 
 def _floor_columns(doc, msp, units, floors, segs=None, rcc_walls=True):
-    """{"columns": {floor: [points]}, "rejects": {floor: [points]}}: the
-    columns the geometry engine finds (one group on a grid), and the C / L
-    shapes on their layer that are walls - cut out of / added to the walls
-    drawn on AI_WALL_*. segs: the raw segments, so a thin piece lying in a
-    wall line is not taken for a column."""
+    """{"columns": {floor: [points]}, "rejects": {floor: [points]}, "info":
+    {floor: [{tier, label, ...}]}, "review": {floor: [{"pts", "why"}]}}: the
+    columns the geometry engine finds (tier 1: one group on a grid; tiers 2
+    and 3: column layers, the floor's own size on its grid, the column
+    library - geoengine._more_columns), and the C / L shapes on their layer
+    that are walls - cut out of / added to the walls drawn on AI_WALL_*.
+    info is in the order of columns; review: library-size shapes that are
+    not taken, for AI_REVIEW. segs: the raw segments, so a thin piece lying
+    in a wall line is not taken for a column."""
     try:
         from . import geoengine as _ge
-        rej = {}
-        cols = _ge._column_shapes(doc, msp, units, floors, rejected=rej, segs=segs, rcc_walls=rcc_walls)
+        rej, rev = {}, {}
+        cols = _ge._column_shapes(doc, msp, units, floors, rejected=rej, segs=segs, rcc_walls=rcc_walls,
+                                  review=rev)
     except Exception:                                 # noqa: BLE001
-        return {"columns": {}, "rejects": {}}
+        return {"columns": {}, "rejects": {}, "info": {}, "review": {}}
     pts = lambda pg: [tuple(map(float, c)) for c in list(pg.exterior.coords)[:-1]]
+    plain = (str, int, float, bool, type(None))
+    info = lambda h: {k: (list(v) if isinstance(v, (list, tuple)) else v) for k, v in (h or {}).items()
+                      if isinstance(v, plain) or isinstance(v, (list, tuple))}
     return {"columns": {f: [pts(pg) for pg, _l, _h in lst] for f, lst in cols.items()},
-            "rejects": {f: [pts(pg) for pg in lst] for f, lst in rej.items()}}
+            "rejects": {f: [pts(pg) for pg in lst] for f, lst in rej.items()},
+            "info": {f: [dict(info(h), layer=l) for _pg, l, h in lst] for f, lst in cols.items()},
+            "review": rev}
 
 
 # -- Slab-edge lines ----------------------------------------------------------
@@ -9050,7 +9060,8 @@ def set_pass_cache_dir(path):
 _PASS_MODULES = ("dxf_reader.py", "roomtrace.py", "walltrace.py", "elements.py", "confidence.py", "labels.py",
                  "rules.py", "geometry.py", "xregions.py", "dxfio.py", "levels.py", "units.py",
                  "layernames.py", "layers.py", "userrules.py", "geoengine.py", "jobs.py", "config.py",
-                 "xplace.py", "elementid.py", "locked.py", "spaces.py", "family_rules.json")
+                 "xplace.py", "elementid.py", "locked.py", "spaces.py", "family_rules.json",
+                 "column_library.py", "column_library.json")
 # config.json sections only read after the floor passes
 _PASS_CONFIG_SKIP = ("area_statement", "facade")
 _STAMP = []
@@ -15152,6 +15163,17 @@ def annotate_dxf(src_path, dst_path, floors, results, family_overrides=None,
             for pts in ((prep.get("columns") or {}).get("columns") or {}).get(floor_name) or []:
                 draw_column(doc, msp, units, pts)
                 stats["columns_drawn"] = stats.get("columns_drawn", 0) + 1
+            # which tier found each, and the column library's name for its
+            # size; the library-size shapes not taken, on AI_REVIEW
+            for inf_ in ((prep.get("columns") or {}).get("info") or {}).get(floor_name) or []:
+                k_ = "columns_tier%s" % (inf_.get("tier") or 1)
+                stats[k_] = stats.get(k_, 0) + 1
+                if inf_.get("label"):
+                    cs_ = stats.setdefault("column_sizes", {})
+                    cs_[inf_["label"]] = cs_.get(inf_["label"], 0) + 1
+            rv_ = ((prep.get("columns") or {}).get("review") or {}).get(floor_name) or []
+            if rv_:
+                stats["columns_review"] = stats.get("columns_review", 0) + draw_door_review(doc, msp, units, rv_)
         # Windows found in the walls (X marks that are not shafts).
         if res.get("windows") and not family_filter:
             if WINDOW_LAYER not in doc.layers:

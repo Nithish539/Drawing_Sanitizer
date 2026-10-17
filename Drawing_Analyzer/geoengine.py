@@ -47,6 +47,7 @@ import numpy as np
 import shapely
 from shapely.geometry import Polygon, box as sbox
 
+from . import column_library as _collib
 from . import dxf_reader as dr
 from . import geomextract as gx
 from . import xregions
@@ -141,9 +142,17 @@ RCC_WALL_MIN_LEN_MM = _geo_setting("rcc_wall_min_len_mm", 1500.0)
 # (the 755 x 200 jambs of the P285 lift openings were cut out of the walls).
 COLUMN_IN_WALL_MAX_MM = _geo_setting("column_in_wall_max_mm", 250.0)
 COLUMN_IN_WALL_FACE_SHARE = _geo_setting("column_in_wall_face_share", 0.5)
+# Tiers 2 and 3 of the column finder (_more_columns): a shape stands on the
+# floor's grid when its centre is this near one of the grid's lines (a
+# tier-1 column's centre x or y); a line running this far on past both ends
+# of a shape's side, along both opposite sides, makes it a stretch of a
+# wall, not a column.
+COLUMN_GRID_LINE_TOL_MM = _geo_setting("column_grid_line_tol_mm", 150.0)
+COLUMN_RUNS_PAST_MM = _geo_setting("column_runs_past_mm", 50.0)
 # Never columns: furniture, fixtures, text, tags, landscape, the area-plan
-# overlay, door and window blocks, hatching of finishes.
-_NOT_COLUMN_LAYER = re.compile(r"FURN|FIX|SANIT|TEXT|ANNO|TAG|DIM|LAND|PLANT|TREE|CAR|PARK|LIGHT|"
+# overlay, door and window blocks, hatching of finishes. PLANT is landscape
+# (PLANTER, PLANTATION), not a planted column (Aquila: COLUMN_PLANTED).
+_NOT_COLUMN_LAYER = re.compile(r"FURN|FIX|SANIT|TEXT|ANNO|TAG|DIM|LAND|PLANT(?!ED)|TREE|CAR|PARK|LIGHT|"
                                r"DOOR|WIND|FINI|TILE|FLOOR|SOLAR|PV|PANEL|^\d+(\.\d+)+\s|SYMB|GRID|NORTH|LEGEND")
 # AutoCAD colour index per class, for the annotated DXF.
 ACI = {"LIFT_LOBBY": 150, "MACHINE_ROOM": 32, "SERVICE_LOBBY": 112, "STAIRCASE": 3,
@@ -1442,7 +1451,7 @@ def _in_wall_line(pg, faces, tmax=None, share=None, tol=5.0):
     return True
 
 
-def _column_shapes(doc, msp, units, floors, rejected=None, segs=None, rcc_walls=True):
+def _column_shapes(doc, msp, units, floors, rejected=None, segs=None, rcc_walls=True, review=None):
     """Columns on each floor. All the columns of a floor are one group - one
     kind of CAD object (closed polyline, circle, block, hatch) on one layer
     - standing on a grid (11 x 11, say). So every column-size object is
@@ -1465,7 +1474,16 @@ def _column_shapes(doc, msp, units, floors, rejected=None, segs=None, rcc_walls=
     and about a wall's thickness (2 x area / perimeter no more than
     RCC_WALL_MAX_MM, RCC_WALL_MIN_LEN_MM or longer) is a concrete wall drawn
     with the columns (Centaurus: the stair and lift core walls on A-COLUMN,
-    38-47 m round, 300 mm thick): put in `rejected` - a wall (AI_WALL)."""
+    38-47 m round, 300 mm thick): put in `rejected` - a wall (AI_WALL).
+
+    That group is tier 1. Tiers 2 and 3 (_more_columns, column_library.json)
+    take the floor's other columns: shapes on a column layer, the floor's own
+    column size on its grid, and sizes in the column library standing
+    alone. review: {floor name: [{"pts", "why", "label", "layer"}]} gets
+    the hatched library-size shapes standing alone off the grid's crossings
+    when it is given. Each column's `how` holds its tier and the library's
+    name for its size (label, type_name, source, size_mm). Should tiers 2
+    and 3 fail on a floor, its tier-1 columns stand as they are."""
     from .dxfio import iter_entities, effective_layer
     import logging
     # Measuring a block's extent makes ezdxf copy it, and it warns about
@@ -1590,6 +1608,8 @@ def _column_shapes(doc, msp, units, floors, rejected=None, segs=None, rcc_walls=
             continue
 
     plate_of = dict(plates)
+    lib = _collib.library()
+    names = _collib.context_names(getattr(doc, "filename", None)) if lib["enabled"] else []
     out = {}
     for fname, by in groups.items():
         best, best_score = None, (0, 0.0)
@@ -1630,13 +1650,30 @@ def _column_shapes(doc, msp, units, floors, rejected=None, segs=None, rcc_walls=
             for (kind, layer), pgs in by.items():
                 if any(k in layer.upper() for k in COLUMN_LAYER_WORDS) and kind.split(":")[0] in ("LWPOLYLINE", "POLYLINE", "CIRCLE"):
                     chosen.extend((pg, layer, {}) for pg in _dedupe_shapes(pgs))
-        if chosen and segs is not None and COLUMN_IN_WALL_MAX_MM > 0:
+        fs, faces = None, None
+        if segs is not None:
             fs = segs.get(fname) if isinstance(segs, dict) else segs
             if fs:
                 pl = plate_of[fname].buffer(2000.0)
                 bx = pl.bounds
-                faces = _wall_faces([sg for sg in fs if bx[0] <= sg[0] <= bx[2] and bx[1] <= sg[1] <= bx[3]])
-                chosen = [c for c in chosen if not _in_wall_line(c[0], faces)]
+                fs = [sg for sg in fs if bx[0] <= sg[0] <= bx[2] and bx[1] <= sg[1] <= bx[3]]
+                faces = _wall_faces(fs)
+        if chosen and faces is not None and COLUMN_IN_WALL_MAX_MM > 0:
+            chosen = [c for c in chosen if not _in_wall_line(c[0], faces)]
+        if lib["enabled"]:
+            # tier 1 named by the library; then tiers 2 and 3
+            try:
+                named1 = [(pg, lay, dict(how_, tier=1, **_size_name(pg, lib, names, how_.get("type") == "CIRCLE")))
+                          for pg, lay, how_ in chosen]
+                more, rev = _more_columns(by, best[0] if best is not None else None, named1, best is not None,
+                                          [w_ for lst_ in hollow[fname].values() for w_ in lst_] + list(rcc[fname]),
+                                          fs, faces, lib, names)
+                chosen = named1 + more
+                if review is not None and rev:
+                    review[fname] = rev
+            except Exception:                         # noqa: BLE001
+                import logging as _lg
+                _lg.getLogger(__name__).exception("column tiers 2 and 3 on %s", fname)
         out[fname] = chosen
         if rejected is not None and rcc.get(fname):
             # the concrete walls on the column layer, once each (its outline
@@ -1648,6 +1685,242 @@ def _column_shapes(doc, msp, units, floors, rejected=None, segs=None, rcc_walls=
                 have.append(p)
             rejected[fname] = have
     return out
+
+
+def _size_name(pg, lib, names, round_=False):
+    """What the column library calls a shape's size: {"label", "type_name",
+    "source", "size_mm"} (label None when no size of it fits)."""
+    sh = _shape(pg)
+    m = _collib.match(sh["width_mm"], sh["height_mm"], round_=round_, names=names, lib=lib)
+    return {"label": m["label"] if m else None, "type_name": m["type"] if m else None,
+            "source": m["source"] if m else None, "size_mm": [sh["width_mm"], sh["height_mm"]]}
+
+
+def _seg_index(segs):
+    """Every line of a floor (any layer) and an index over them, for
+    _runs_past."""
+    from shapely.strtree import STRtree
+    ls = [tuple(map(float, sg[:4])) for sg in segs or () if math.hypot(sg[2] - sg[0], sg[3] - sg[1]) >= 5.0]
+    boxes = [shapely.box(min(a[0], a[2]) - .01, min(a[1], a[3]) - .01, max(a[0], a[2]) + .01, max(a[1], a[3]) + .01)
+             for a in ls]
+    return ls, (STRtree(boxes) if boxes else None)
+
+
+def _runs_past(pg, idx, tol=5.0, beyond=None):
+    """A stretch of a wall: on both of two opposite sides of the shape's
+    rectangle a single line runs along the side and on past both its ends
+    (by COLUMN_RUNS_PAST_MM) - the wall's faces drawn through it. A column
+    the walls stop at, or a column on a wall's face, is not one. idx:
+    _seg_index."""
+    ls, tree = idx
+    if tree is None:
+        return False
+    beyond = COLUMN_RUNS_PAST_MM if beyond is None else beyond
+    r = pg.minimum_rotated_rectangle
+    if r.geom_type != "Polygon":
+        return False
+    xy = list(r.exterior.coords)[:4]
+    cont = []
+    for i in range(4):
+        p, q = xy[i], xy[(i + 1) % 4]
+        L = math.hypot(q[0] - p[0], q[1] - p[1])
+        hit = False
+        if L > 0:
+            ux, uy = (q[0] - p[0]) / L, (q[1] - p[1]) / L
+            for k in tree.query(shapely.LineString([p, q]).buffer(tol + 1.0)):
+                a = ls[int(k)]
+                sl = math.hypot(a[2] - a[0], a[3] - a[1])
+                if abs((a[2] - a[0]) / sl * uy - (a[3] - a[1]) / sl * ux) > 0.02:
+                    continue                          # not along this side
+                v0 = (a[0] - p[0]) * -uy + (a[1] - p[1]) * ux
+                v1 = (a[2] - p[0]) * -uy + (a[3] - p[1]) * ux
+                if abs(v0) > tol or abs(v1) > tol:
+                    continue                          # not on this side's line
+                s0 = (a[0] - p[0]) * ux + (a[1] - p[1]) * uy
+                s1 = (a[2] - p[0]) * ux + (a[3] - p[1]) * uy
+                if min(s0, s1) <= -beyond and max(s0, s1) >= L + beyond:
+                    hit = True
+                    break
+        cont.append(hit)
+    return (cont[0] and cont[2]) or (cont[1] and cont[3])
+
+
+_DOOR_LINE_LAYER = re.compile(r"DOOR|SHUTTER")
+
+
+def _holds_lines(pg, idx, min_len=100.0, tol=5.0):
+    """A line of the index (a door's) at least min_len long lying inside the
+    shape. idx: _seg_index."""
+    ls, tree = idx
+    if tree is None:
+        return False
+    inner = pg.buffer(tol)
+    for k in tree.query(pg):
+        a = ls[int(k)]
+        if math.hypot(a[2] - a[0], a[3] - a[1]) >= min_len and \
+                inner.contains(shapely.LineString([(a[0], a[1]), (a[2], a[3])])):
+            return True
+    return False
+
+
+def _touches_walls(pg, faces, tol=10.0):
+    """A wall-layer line runs into the shape (or along it and on): it is not
+    standing alone. Its own outline, inside it, does not count. faces:
+    _wall_faces."""
+    if faces is None:
+        return False
+    ls, tree = faces
+    if tree is None:
+        return False
+    near = pg.buffer(tol)
+    for k in tree.query(near):
+        a = ls[int(k)]
+        ln = shapely.LineString([(a[0], a[1]), (a[2], a[3])])
+        if ln.intersects(near) and not near.contains(ln):
+            return True
+    return False
+
+
+def _more_columns(by, grid_key, chosen, on_grid_floor, walls_like, segs, faces, lib, names):
+    """Tiers 2 and 3 of the column finder, after the floor's grid group (tier
+    1, `chosen`). The candidates are the floor's other closed column-size
+    shapes (`by`: {(kind, layer): [polygon]}, the grid group's own key left
+    out), one per place (the outermost; what the others there are drawn as
+    and on counts with it), not a tier-1 column already:
+      tier 2 - drawn on a column layer (COLUMN_LAYER_WORDS: Aquila's planted
+               columns, XA's facade columns), or this floor's own column
+               size (a tier-1 size, column_library floor_confirmed) on a
+               crossing of the grid's lines;
+      tier 3 - a size in the column library (column_library.json), hatched,
+               standing alone (_touches_walls: no wall-layer line runs into
+               it) and, on a floor with a grid, on a crossing of its lines.
+    A hatched library size standing alone off the grid's crossings is not
+    taken: it is returned for review. One touching walls is left alone (on
+    Aquila and P285 those were the hatch pieces at wall corners and door
+    jambs), and so is an unhatched one (on Centaurus: plumbing blocks,
+    toilet fitments, schedule bubbles). Never taken: a block's extent alone
+    (an INSERT is measured by its block's box, not by a drawn outline), a
+    shape holding a door's lines (Aquila: the door openings drawn on the
+    COLUMNS layer), a stretch of a wall (_runs_past), a thin piece in a
+    wall line (_in_wall_line), a shape inside a C / L or concrete wall
+    (walls_like), one outside the library's limits (shorter side, longer
+    side, aspect); and for the library and the
+    floor's size, a shape drawn on a wall layer or on a layer of the
+    library's not_column_layer_words (cut-outs, shafts, glazing, sections,
+    services ...).
+    -> ([(polygon, layer, how)], [{"pts", "why", "label", "layer"}])"""
+    from shapely.strtree import STRtree
+    lim = lib["limits"]
+    have = [c[0] for c in chosen]
+    have_tree = STRtree(have) if have else None
+    gx = [pg.centroid.x for pg in have] if on_grid_floor else []
+    gy = [pg.centroid.y for pg in have] if on_grid_floor else []
+    confirmed = []
+    for pg in have:
+        s_ = _shape(pg)
+        k_ = (float(s_["width_mm"]), float(s_["height_mm"]))
+        if k_ not in confirmed:
+            confirmed.append(k_)
+    cands, hatches = [], []
+    for (kind, layer), pgs in by.items():
+        for pg in pgs:
+            if kind == "HATCH":
+                hatches.append(pg)
+            if grid_key is not None and (kind, layer) == grid_key:
+                continue
+            cands.append((pg, kind, layer))
+    if not cands:
+        return [], []
+    hatch_tree = STRtree(hatches) if hatches else None
+    places = []
+    for pg, kind, layer in sorted(cands, key=lambda t_: -t_[0].area):
+        c = pg.centroid
+        kind = kind.split(":")[0]
+        at = None
+        for pl_ in places:
+            o = pl_["pg"]
+            if abs(c.x - o.centroid.x) <= 300.0 and abs(c.y - o.centroid.y) <= 300.0 \
+                    and (o.contains(c) or pg.contains(o.centroid)):
+                at = pl_
+                break
+        if at is None:
+            at = {"pg": pg, "kinds": set(), "layers": set(), "drawn": set()}
+            places.append(at)
+        at["kinds"].add(kind)
+        at["layers"].add(layer)
+        if kind != "INSERT":
+            at["drawn"].add((kind, layer))            # drawn as an outline or a hatch, not a block's box
+
+    def named_(layer):
+        return any(k in layer.upper() for k in COLUMN_LAYER_WORDS)
+
+    def near_line(v, vals):
+        return any(abs(v - g) <= COLUMN_GRID_LINE_TOL_MM for g in vals)
+
+    from . import walltrace as _wt
+    not_lay = lib.get("not_column_layer_rx")
+
+    def plain_layer(l_):
+        """Not a wall layer, nor one the library rules out."""
+        return not _wt.is_wall_layer(l_) and not (not_lay is not None and not_lay.search(str(l_).upper()))
+
+    seg_idx, door_idx = None, None
+    out, rev = [], []
+    for pl_ in places:
+        pg = pl_["pg"]
+        if not pl_["drawn"]:
+            continue                                  # a block's box only: no drawn outline
+        c = pg.representative_point()
+        if have_tree is not None and any(have[int(i)].buffer(50.0).contains(c) or pg.contains(have[int(i)].centroid)
+                                         for i in have_tree.query(pg.buffer(50.0))):
+            continue                                  # a tier-1 column already
+        sh = _shape(pg)
+        a, b = float(sh["width_mm"]), float(sh["height_mm"])
+        if a <= 0 or a < lim["min_side_mm"] or b > lim["max_side_mm"] or b / a > lim["max_aspect"]:
+            continue
+        if any(w.intersects(pg) and w.intersection(pg).area >= 0.5 * pg.area for w in walls_like):
+            continue                                  # part of a C / L or concrete wall
+        if faces is not None and _in_wall_line(pg, faces):
+            continue                                  # a thin piece in a wall line
+        if segs:
+            if seg_idx is None:
+                seg_idx = _seg_index(segs)
+            if _runs_past(pg, seg_idx):
+                continue                              # the wall's faces run on through it
+            if door_idx is None:
+                door_idx = _seg_index([sg for sg in segs if len(sg) > 4 and _DOOR_LINE_LAYER.search(str(sg[4]).upper())])
+            if _holds_lines(pg, door_idx):
+                continue                              # a door's lines inside: an opening, not a column
+        drawn_layers = sorted({l_ for k_, l_ in pl_["drawn"] if k_ != "HATCH"}) or \
+            sorted({l_ for _k, l_ in pl_["drawn"]})
+        named = any(named_(l_) for l_ in drawn_layers)
+        plain = all(plain_layer(l_) for l_ in drawn_layers)
+        round_ = "CIRCLE" in pl_["kinds"]
+        hatched = "HATCH" in pl_["kinds"] or (hatch_tree is not None and any(
+            hatches[int(i)].intersection(pg).area >= 0.8 * pg.area and hatches[int(i)].area <= 1.25 * pg.area
+            for i in hatch_tree.query(pg)))
+        on_cross = bool(gx) and near_line(pg.centroid.x, gx) and near_line(pg.centroid.y, gy)
+        m = _collib.match(a, b, round_=round_, confirmed=confirmed, names=names, lib=lib)
+        touching = _touches_walls(pg, faces)
+        layer = sorted(drawn_layers, key=lambda l_: (not named_(l_), l_))[0]
+        how = {"label": m["label"] if m else None, "type_name": m["type"] if m else None,
+               "source": m["source"] if m else None, "size_mm": [round(a), round(b)],
+               "hatched": bool(hatched), "on_grid": bool(on_cross), "touching_walls": bool(touching),
+               "type": sorted(k_ for k_, _l in pl_["drawn"])[0]}
+        if named:
+            out.append((pg, layer, dict(how, tier=2, why="drawn on a column layer")))
+        elif m is None or not plain:
+            continue
+        elif m["source"] == "floor_confirmed" and on_cross:
+            out.append((pg, layer, dict(how, tier=2, why="this floor's column size, on its grid")))
+        elif not hatched or touching:
+            continue
+        elif on_cross or not on_grid_floor:
+            out.append((pg, layer, dict(how, tier=3, why="column library size " + m["label"])))
+        else:
+            rev.append({"pts": [[round(x, 1), round(y, 1)] for x, y in list(pg.exterior.coords)[:-1]],
+                        "why": "column? %s - off the grid" % m["label"], "label": m["label"], "layer": layer})
+    return out, rev
 
 
 def _dedupe_shapes(pgs, near=300.0):
