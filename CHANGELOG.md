@@ -2174,3 +2174,40 @@ Every cell still off is a sheet convention, a shaft-naming difference, or a room
 ### Files
 
 `dxf_reader.py`. Scratch tools (not in the code base): `run_dxf.py` (a DXF through the whole flow), `manual_report.py`, `stepbook2.py` (the new sequence step by step on BHUB 1st: `BHUB 1st Floor/BHUB_FIRST_FLOOR - new sequence step by step.pdf`).
+
+## 2026-10-17 (night) - one engine: the geometry engine's run is gone, every step after Step 3 reads the Step 3 result store (branch `converge-step3-geoengine`, not merged)
+
+Until now Step 2's Proceed started a second engine (`geoengine.run`) in a process of its own: it parsed the drawing again, traced the walls, searched the doors and found the columns a second time, and classified every enclosed space from shape alone. The Geometry tab, the comparison and the final drawing read that second result, and the final drawing read the Step 3 drawing back from disk for the rooms' scores, the stair wells, the columns and the doors. Step 3 finds all of that in its one pass now (walls W1-W3, the X sequence, the doors, the spaces traced before any text, the columns), so the second engine found nothing Step 3 did not - it only cost a parse, a wall trace, a door search and a column pass per Generate, and a drawing of walls that could differ from Step 3's.
+
+### What changed
+
+- **The Step 3 result store** (`step3store.py`, new): `annotate_dxf` returns everything the pass decided as `stats["step3"]` and `/annotate` writes it to `<token>_step3.json` (download `step3_json`). Per floor: the plate; the walls by class (pieces with their holes); every door opening with its kind, level, sides, the room it belongs to, the line drawn and the way into its room; the doubtful openings and shafts; the glass; the windows and cut-outs; the columns drawn; the hanging walls; every room written (label, family, layer, outline, holes, source, X class, Step 3's confidence and reasons); the spaces as traced before any text was read (now with their outlines); the X marks decided; the lift-bank lines; the lock report; the text statuses. A run of one family, or of the Geometry tab's shapes alone, is an export and leaves the store of the last full run standing.
+- **The readers** (`step3store.py`): `findings` - the rooms as the Geometry tab's records (GEO-nnnn, class from the family, the room's name, Step 3's score as the confidence, its reasons as the evidence; a family the engine's classes do not name - MEP / Services, AHU Room, Circulation ... - travels as the record's category; never Step 3's six); `as_geo` - walls, doors, glass, hanging walls, doubtful openings, plates, columns and the doors' attributes in the shape the final drawing reads; `confidence_index` and `side_shapes` - the room scores, stair wells, columns and door lines the final drawing used to read back from the drawing; `trace_context` - the walls a Trace click is traced against.
+- **The routes**: `/geoengine/run` builds the tab's result from the store (409 until Step 3 has run); `/geoengine/compare` takes the geometry side from the store (and, when it runs the text engine for the text side, keeps that run as the store); `/geoengine/final` draws Step 3's walls, doors, columns, glass, hanging walls and wells from the store and reads no drawing back; `/geoengine/generate`, `/geoengine/run` and the final drawing draw into the Step 3 drawing kept in memory (dxfio) with the app's boundaries taken off (`_source_doc`) - no parse of the uploaded file; Trace after a restart rebuilds its context from the store. `/extract` no longer starts a background process: it works the drawing's preparation for Step 3 out on the copy it just parsed (`dxf_reader.prepare_floors_ahead`, into the prep cache) so the first Generate finds it ready (`/annotate` waits for it if it is still going) - Step 2 and Step 3 together parse the file once.
+- **Deleted**: `geoengine.run`, `run_to_files`, `_add_walls`, `_classify_floor` and its candidate readers (treads, fixtures, revision clouds), `_guard_finding`, `_finish`, the families / repetition pass, the engine's lift-door reading, the measured-confidence profile (`load_profile`, `confidence`, `geo_profiles.json`, `geolearn.py`), the background process in app.py, and the final drawing's three read-backs of the Step 3 drawing (`_text_confidence_index`, `_text_side_shapes`, `_text_stair_wells`). `geoengine.py` 2204 -> 700 lines. **Kept** in `geoengine.py`: the one column finder `_column_shapes` and its helpers (Step 3's `_floor_columns` reads it; the other session's column stage lands there and reaches every consumer through the store's `columns`), the classes and layers, `write_dxf` (now draws Step 3's doors as Step 3 drew them: kinds, levels, lines), `step3_free`, `apply_reviews`, `build_final` (now carries the holes and the doors' attributes).
+- `door_rooms` / `door_solid` moved from the engine to `dxf_reader` (they reshape rooms the user changed in the tab; nothing finds anything). `draw_doors` can return the lines it drew (`out_lines`). The Geometry tab's page takes a finding's category as its family (`static/geometry.js`).
+
+### Measured (headless, one floor each, the same machine, before = main at 1b57859; `Final_Outputs_2026-10-17_Converge_Step3_Geoengine/`)
+
+| drawing | step | before s | after s |
+|---|---|---|---|
+| P285 11th | Step 3 Generate | 191.5 | 166.8 |
+| P285 11th | Geometry tab findings | 89.4 | 7.2 |
+| P285 11th | comparison | 14.9 | 14.4 |
+| P285 11th | final drawing | 27.6 | 11.5 |
+| P285 11th | drawing files parsed | 5 | 3 |
+| H10 T1 typical | Step 3 Generate | 44.0 | 37.6 |
+| H10 T1 typical | Geometry tab findings | 28.9 | 4.3 |
+| H10 T1 typical | comparison | 13.0 | 8.2 |
+| H10 T1 typical | final drawing | 15.0 | 5.7 |
+| H10 T1 typical | drawing files parsed | 5 | 3 |
+
+The Step 3 drawing and its area statement are identical before and after on both floors (same rooms, doors, walls, columns). The final drawing differs only where the second engine used to add something of its own: on P285 the engine listed the one 18.45 sq.m LOBBY twice (SERVICE_LOBBY_01 / _02) and the statement counted it twice - it is Step 3's one LOBBY now; on H10 a 7.1 sq.m space with nothing written in it, which the engine called SERVICE_LOBBY_02 from its shape, is Step 3's unnamed ROOM (service_lobby 21.71 -> 14.47), and two staircase outlines are Step 3's instead of the engine's taken by precedence (+0.22). The Geometry tab offers Step 3's rooms (named, scored) instead of the engine's 5-8 shape-only findings.
+
+### Tests
+
+859 pass. The engine's own tests (its run, classifier, guard, lift-door reading, profile confidence) are deleted with it; the tests of the wall trace that went through `_add_walls` now call `walltrace.trace_floor` + `wall_polygons` directly (the same code Step 3 runs); `tests/test_step3store.py` (new) covers the store end to end (annotate_dxf -> store -> findings / as_geo / side_shapes / confidence_index / trace_context / write_dxf), the category of a family without an engine class, and the prepare-ahead path.
+
+### Files
+
+`step3store.py` (new), `dxf_reader.py`, `geoengine.py`, `app.py`, `static/geometry.js`, `tests/test_step3store.py` (new), `tests/test_geoengine.py`, `tests/test_wall_hatch_fill.py`, `tests/test_wall_tracing_fixes.py`, `tests/test_rooms_and_door_levels.py`, `tests/test_six_fixes.py`, `tests/test_boundary_fixes.py`, `tests/test_shaft_core_and_settle.py`, `tests/test_rotation_and_compartments.py`; deleted `geolearn.py`, `geo_profiles.json`. Scratch tools (not in the code base): `flow_run.py` (the flow through the Flask test client, counting parses), `report.py` (the before/after PDF), `prep_ahead_check.py`. Not merged into `main`: the column stage of the other session lands there first.

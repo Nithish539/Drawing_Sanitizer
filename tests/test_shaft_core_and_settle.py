@@ -189,42 +189,6 @@ class CompareTests(unittest.TestCase):
         self.assertEqual((s["agreement_exact"], s["agreement_family"], s["agreement_generic"]), (1, 1, 1))
 
 
-class GeometryCellTests(unittest.TestCase):
-    """An X slot at the back of a walled cell with a door in front: a shaft,
-    not a cut-out in the wall (P285 FHC, was CUTOUT_08)."""
-
-    def run_floor(self, with_door=True):
-        # the slot 1200 x 300 in a 300 mm wall band (y 650..950), the cabinet
-        # in front (y 0..650) closed by walls at x 0 and 1200, its door at y 0
-        slot = {"kind": "x", "poly": rect(0, 650, 1200, 950), "layers": ["A-CUTOUT"]}
-        walls = [(-200, 650, 1400, 650), (-200, 950, 1400, 950),       # the band's faces
-                 (0, 0, 0, 650), (-200, 0, -200, 650),                  # the cell's two ends
-                 (1200, 0, 1200, 650), (1400, 0, 1400, 650)]
-        seg_rows = [(w[0], w[1], w[2], w[3], "A-WALL", math.hypot(w[2] - w[0], w[3] - w[1]), -1, False, False)
-                    for w in walls]
-        # the X: two diagonals on the cut-out layer
-        seg_rows += [(0, 650, 1200, 950, "A-CUTOUT", 1237.0, -1, False, False),
-                     (0, 950, 1200, 650, "A-CUTOUT", 1237.0, -1, False, False)]
-        if with_door:
-            seg_rows += [(150, 0, 1050, 0, "A-DOOR", 900.0, -1, True, False),
-                         (150, 45, 1050, 45, "A-DOOR", 900.0, -1, True, False)]
-        hatch = [[rect(-200, 650, 1400, 950)]]
-        R = ge.load_profile()["ranges"]
-        import collections
-        diag = collections.Counter()
-        ents = ge._classify_floor("F", {"name": "F", "polygon": rect(-5000, -5000, 5000, 5000)},
-                                  [slot], [], [], None, None, [], R, diag, walls=walls,
-                                  seg_rows=seg_rows, hatches=hatch)
-        return [e for e in ents if e.pg.equals(Polygon(slot["poly"]))], diag
-
-    def test_an_x_slot_is_no_finding_door_or_not(self):
-        # what the slot is - a shaft behind its cabinet, or a cut-out in the
-        # wall - is the X sequence's (Step 3): the geometry reports nothing
-        for door in (True, False):
-            found, _diag = self.run_floor(door)
-            self.assertEqual(found, [], door)
-
-
 class RccWallTests(unittest.TestCase):
 
     def test_a_long_thin_shape_on_the_column_layer_is_a_wall(self):

@@ -226,42 +226,6 @@ class GuardrailTests(unittest.TestCase):
 class GeometryChecksTests(unittest.TestCase):
     """Lift doors, the column grid and the service lobby column."""
 
-    def test_lift_door_is_an_opening_in_its_wall(self):
-        from shapely.geometry import box
-        from Drawing_Analyzer import geoengine as ge
-        lift = box(0, 0, 2650, 2650)
-        lobby = box(-3000, 2850, 6000, 6850)                    # above the lift
-        R = {"lift_door_min_mm": 700, "lift_lobby_side_reach_mm": 600}
-        # its front wall with a 1300 mm opening, and without one
-        open_wall = [(-900, 2650, 675, 2650), (1975, 2650, 3500, 2650)]
-        shut_wall = [(-900, 2650, 3500, 2650)]
-        self.assertTrue(ge._lift_has_door(lift, lobby, [], [], open_wall, R))
-        self.assertFalse(ge._lift_has_door(lift, lobby, [], [], shut_wall, R))
-        # a door line at the lift counts as its door
-        self.assertTrue(ge._lift_has_door(lift, lobby, [(1000, 2700, 1600, 2700)], [], shut_wall, R))
-
-    def test_what_fills_a_lift_opening_is_not_its_wall(self):
-        # P285: the slip-form wall stops for 1100 mm; the landing door is a
-        # rectangle on "A-ELEV 2" in the gap - the opening is the door
-        from shapely.geometry import box
-        from Drawing_Analyzer import geoengine as ge
-        lift = box(0, 0, 2650, 2650)
-        lobby = box(-3000, 2850, 6000, 6850)
-        R = {"lift_door_min_mm": 700, "lift_lobby_side_reach_mm": 600}
-        walls = [(-900, 2650, 775, 2650), (1875, 2650, 3500, 2650), (775, 2650, 1875, 2650)]
-        rows = [(-900, 2650, 775, 2650, "A-SLIP FORM RC"), (1875, 2650, 3500, 2650, "A-SLIP FORM RC"),
-                (775, 2650, 1875, 2650, "A-ELEV 2")]
-        self.assertFalse(ge._lift_has_door(lift, lobby, [], [], ge._real_walls(walls, rows), R))
-        self.assertTrue(ge._lift_has_door(lift, lobby, [], [],
-                                          ge._real_walls(walls, rows, also_not=ge._LIFT_DOOR_LAYER), R))
-
-    def test_area_plan_and_finish_lines_are_not_walls(self):
-        from Drawing_Analyzer import geoengine as ge
-        walls = [(0, 0, 100, 0), (0, 10, 100, 10), (0, 20, 100, 20)]
-        rows = [(0, 0, 100, 0, "A3-WL_EXT", 100, -1, False),
-                (0, 10, 100, 10, "1.3 SALEABLE-TSIIC-LIFT SHAFT", 100, -1, False),
-                (0, 20, 100, 20, "A3-floor fini", 100, -1, False)]
-        self.assertEqual(ge._real_walls(walls, rows), [(0, 0, 100, 0)])
 
     def test_column_grid_is_dense_and_fins_are_not(self):
         from shapely.geometry import box

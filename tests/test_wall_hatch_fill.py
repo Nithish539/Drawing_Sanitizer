@@ -132,16 +132,25 @@ class HatchedStripsStay(unittest.TestCase):
         self.assertAlmostEqual(U.area, 400 * 200, delta=50)
 
 
+def walls_like_step3(segs, fallback_strips, plate):
+    """The walls as Step 3 (and, until 2026-10-17, the geometry engine's
+    _add_walls) builds them: walltrace on the segments, the fallback strips
+    where the floor has no wall-layer lines, then wall_polygons. Returns
+    the report per class."""
+    from Drawing_Analyzer import walltrace as wt
+    traced = wt.trace_floor(segs, [], [], plate, arcs=[])
+    strips = (traced["strips"] if traced is not None else fallback_strips) or []
+    _pieces, rep = dr.wall_polygons(strips, plate, [], [], [], [], [])
+    return rep
+
+
 class ClosuresDoNotCutWalls(unittest.TestCase):
 
     def test_closures_along_both_faces_leave_the_wall(self):
         segs = outline(rect(0, 0, 200, 1100))
         engine_strips = [{"pts": rect(0, 0, 200, 1100), "t": 200, "layers": ("X", "X")}]
-        closures = [(0, 0, 0, 1100), (200, 0, 200, 1100)]               # along both faces
-        out = {"floors": {"F": []}}
-        ctx = {"F": {"segs": segs, "strips": engine_strips, "rows": [], "doors": closures}}
-        ge._add_walls(out, [{"name": "F", "polygon": PLATE}], ctx, [], {}, {}, all_hatches=[], arcs=[])
-        self.assertAlmostEqual(out["walls_summary"]["total"][LN.WALL]["area_sqm"], 0.22, places=2)
+        rep = walls_like_step3(segs, engine_strips, PLATE)
+        self.assertAlmostEqual(rep[LN.WALL]["area_sqm"], 0.22, places=2)
 
 
 if __name__ == "__main__":

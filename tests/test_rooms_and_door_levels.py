@@ -175,14 +175,12 @@ class FinalDrawingSolid(unittest.TestCase):
     draw_walls takes them: {layer: [[outline, hole, ...], ...]}."""
 
     def test_a_wall_with_a_hole(self):
-        from Drawing_Analyzer import geoengine as ge
         walls = {"AI_WALL": [[rect(0, 0, 3000, 3000), rect(200, 200, 2800, 2800)], [rect(5000, 0, 5200, 3000)]]}
-        g = ge.door_solid(walls)
+        g = dr.door_solid(walls)
         self.assertAlmostEqual(g.area, 3000 * 3000 - 2600 * 2600 + 200 * 3000, delta=1)
 
     def test_a_bare_ring_is_read_too(self):
-        from Drawing_Analyzer import geoengine as ge
-        self.assertAlmostEqual(ge.door_solid({"AI_WALL": [rect(0, 0, 200, 3000)]}).area, 600000, delta=1)
+        self.assertAlmostEqual(dr.door_solid({"AI_WALL": [rect(0, 0, 200, 3000)]}).area, 600000, delta=1)
 
 
 class DoorBetweenWallEnds(unittest.TestCase):

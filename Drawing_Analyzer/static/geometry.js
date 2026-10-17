@@ -200,7 +200,8 @@
         return { id: r.id, kind: f.source || "space", cls: r.cls, row: r, bbox: b, poly: r.poly,
                  layers: f.layers || [], note: r.reason || "", area_sqm: r.area_sqm,
                  size_mm: [Math.round(b[2] - b[0]), Math.round(b[3] - b[1])], texts: [],
-                 label: r.label, label_sr: null, family: famOf(r), hidden_layer: false,
+                 // a finding read from the Step 3 result store carries Step 3's family as its category
+                 label: r.label, label_sr: (r.label_sr == null ? null : r.label_sr), family: r.category || famOf(r), hidden_layer: false,
                  foundAs: nice(r.cls) + (r.sub ? " (" + nice(r.sub) + ")" : "") + " \u00b7 " + (SOURCE[f.source] || f.source || "") };
     }
     function fromEngine(res) {

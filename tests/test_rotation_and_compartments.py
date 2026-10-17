@@ -339,10 +339,6 @@ class StairAndNamingTests(unittest.TestCase):
         for name in ("STR PRE", "STR \nPRE", "STR PRESS SHAFT", "STAIR PREZ"):
             self.assertEqual(dr.family_for_label(name, dr._FAMILY_RULES)["name"], "Shaft", name)
 
-    def test_the_well_range_takes_the_xa_well(self):
-        from Drawing_Analyzer import geoengine as ge
-        R = ge.load_profile()["ranges"]
-        self.assertLessEqual(R["stair_well_short_mm"][0], 446)
 
     def test_any_layer_x_marks(self):
         """The X sequence's step 1 (2026-10-16): every X mark on the floor,

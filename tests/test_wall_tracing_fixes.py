@@ -241,6 +241,18 @@ class OutputTests(unittest.TestCase):
         self.assertEqual(self.stats.get("walls_balcony_parapet_vetoed", 0), 0)
 
 
+def walls_like_step3(segs, fallback_strips, plate):
+    """The walls as Step 3 builds them (walltrace on the segments, the
+    fallback strips where the floor has no wall-layer lines, then
+    wall_polygons) - what the geometry engine's _add_walls did for the final
+    drawing until 2026-10-17; the final drawing takes Step 3's walls now."""
+    from Drawing_Analyzer import walltrace as wt
+    traced = wt.trace_floor(segs, [], [], plate, arcs=[])
+    strips = (traced["strips"] if traced is not None else fallback_strips) or []
+    _pieces, rep = dr.wall_polygons(strips, plate, [], [], [], [], [])
+    return rep
+
+
 class FinalDrawingTracesLikeStep3Tests(unittest.TestCase):
 
     def test_glazing_pairs_are_not_walls_in_the_final_drawing(self):
@@ -250,20 +262,14 @@ class FinalDrawingTracesLikeStep3Tests(unittest.TestCase):
                 seg(1000, 11000, 9000, 11000, "A-FLOR-EVTR"), seg(1000, 11200, 9000, 11200, "A-FLOR-EVTR")]
         engine_strips = [{"pts": rect(1000, y, 9000, y + t), "t": t, "layers": ("X", "X")}
                          for y, t in ((5000, 200), (8000, 250), (11000, 200))]
-        out = {"floors": {"F": []}}
-        ctx = {"F": {"segs": segs, "strips": engine_strips, "rows": [], "doors": []}}
-        ge._add_walls(out, [{"name": "F", "polygon": plate}], ctx, [], {}, {}, all_hatches=[], arcs=[])
-        a = out["walls_summary"]["total"][LN.WALL]["area_sqm"]
-        self.assertAlmostEqual(a, 8 * 0.2, places=2)                   # the wall only
-        self.assertIn("F", out["doors"])
+        rep = walls_like_step3(segs, engine_strips, plate)
+        self.assertAlmostEqual(rep[LN.WALL]["area_sqm"], 8 * 0.2, places=2)      # the wall only
 
     def test_no_wall_layers_keeps_the_engine_strips(self):
         plate = rect(0, 0, 20000, 15000)
         engine_strips = [{"pts": rect(1000, 5000, 9000, 5200), "t": 200, "layers": ("X", "X")}]
-        out = {"floors": {"F": []}}
-        ctx = {"F": {"segs": [seg(0, 0, 100, 0, "A-FURN")], "strips": engine_strips, "rows": [], "doors": []}}
-        ge._add_walls(out, [{"name": "F", "polygon": plate}], ctx, [], {}, {}, all_hatches=[], arcs=[])
-        self.assertAlmostEqual(out["walls_summary"]["total"][LN.WALL]["area_sqm"], 1.6, places=2)
+        rep = walls_like_step3([seg(0, 0, 100, 0, "A-FURN")], engine_strips, plate)
+        self.assertAlmostEqual(rep[LN.WALL]["area_sqm"], 1.6, places=2)
 
 
 if __name__ == "__main__":

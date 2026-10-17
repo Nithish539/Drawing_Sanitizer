@@ -121,7 +121,6 @@ class WindowTests(unittest.TestCase):
         self.assertNotIn("WINDOW", ge.CLASSES)
         self.assertNotIn("WINDOW", ge.LAYER_OF)
         self.assertIn("WINDOW", ge.STEP3_CLASSES)
-        self.assertNotIn("windows", ge.DEFAULT_SEQUENCE)
         self.assertEqual(gc.SUMMARY_CLASS["WINDOW"], "WINDOW")
         self.assertEqual(gc.text_class_of_layer(dr.WINDOW_LAYER), "WINDOW")
         self.assertEqual(gc.SPECIFIC["WINDOW"], set())
@@ -158,40 +157,6 @@ class UnitsTests(unittest.TestCase):
             d2, _m, units = dr.load_document(path, 4)
             dr.set_insunits(d2, units)
             self.assertEqual(d2.header["$INSUNITS"], 4)
-
-
-class StaircaseGuardTests(unittest.TestCase):
-    """4. Treads inside a staircase do not cut it to its well."""
-
-    def stair(self):
-        e = ge._E("STAIRCASE", "stair_flights_space", box(0, 0, 4800, 7500), {}, "F")
-        e.features = {}
-        return e
-
-    def test_treads_inside_do_not_cut(self):
-        e = self.stair()
-        treads = [(200, y, 2100, y) for y in range(1000, 6000, 300)] + \
-                 [(2700, y, 4600, y) for y in range(1000, 6000, 300)] + \
-                 [(2100, 1000, 2100, 6000), (2700, 1000, 2700, 6000)]       # the well's sides
-        diag = collections.Counter()
-        ge._guard_finding(e, treads, [], diag)
-        self.assertAlmostEqual(e.pg.area / 1e6, 36.0, places=1)
-
-    def test_cut_leaving_a_sliver_is_skipped(self):
-        e = self.stair()
-        # walls crossing in from outside either side of its centre: the
-        # piece holding the centre would be a 0.5 m strip
-        walls = [(-500, 3500, 5300, 3500), (-500, 4000, 5300, 4000)]
-        diag = collections.Counter()
-        ge._guard_finding(e, walls, [], diag)
-        self.assertAlmostEqual(e.pg.area / 1e6, 36.0, places=1)
-        self.assertTrue(any("guardrail cut skipped" in x["text"] for x in e.evidence))
-
-    def test_a_room_is_still_cut(self):
-        e = ge._E("ROOM", "room_space", box(0, 0, 6000, 4000), {}, "F")
-        e.features = {}
-        ge._guard_finding(e, [(3000, -100, 3000, 4100)], [], collections.Counter())
-        self.assertLess(e.pg.area, 24e6 * 0.6)
 
 
 class PassCacheKeyTests(unittest.TestCase):

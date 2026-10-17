@@ -4457,7 +4457,7 @@ def door_tag(entity):
 
 
 def draw_doors(doc, msp, units, quads, kinds=None, levels=None, sides=None, rooms=None, owners=None, lines=None,
-               dirs=None):
+               dirs=None, out_lines=None):
     """Door openings (the gap in the wall a door closes): never a room,
     never a wall, never in an area. A primary door (between two different
     spaces: it stops a room) on AI_P_DOORS, a secondary one (inside one
@@ -4474,8 +4474,11 @@ def draw_doors(doc, msp, units, quads, kinds=None, levels=None, sides=None, room
     back), and the way into the door's room (dirs: a unit vector per quad,
     door_room_dir reads it back). Off: the opening as a closed polyline, as
     before. kinds / levels / sides: one per quad (default exit / primary);
-    rooms: the rooms drawn (shapely polygons), for door_line. Returns
-    {level: count}."""
+    rooms: the rooms drawn (shapely polygons), for door_line. out_lines, a
+    list: receives the line drawn for each quad (two points, mm; None where
+    the opening was drawn as a closed polyline) - the Step 3 result store
+    keeps them, so the final drawing draws each door where Step 3 did
+    without reading the drawing back. Returns {level: count}."""
     n = collections.Counter()
     tree = None
     room_list = [r for r in (rooms or ()) if r is not None and not r.is_empty] if DOOR_AS_LINE else []
@@ -4485,6 +4488,8 @@ def draw_doors(doc, msp, units, quads, kinds=None, levels=None, sides=None, room
     from . import elements as _el
     for k, q in enumerate(quads or ()):
         if len(q) < 3:
+            if out_lines is not None:
+                out_lines.append(None)
             continue
         kind = kinds[k] if kinds and k < len(kinds) else "exit"
         level = levels[k] if levels and k < len(levels) else "primary"
@@ -4508,6 +4513,8 @@ def draw_doors(doc, msp, units, quads, kinds=None, levels=None, sides=None, room
                                    dxfattribs={"layer": layer, "color": 256})
         _tag_door(doc, e, kind, level, (sides[k] if sides and k < len(sides) else ("", "")), quad=q,
                   room_dir=(dirs[k] if dirs and k < len(dirs) else None))
+        if out_lines is not None:
+            out_lines.append([[float(p[0]), float(p[1])] for p in ln] if ln is not None else None)
         n[level] += 1
     return dict(n)
 
@@ -4538,6 +4545,99 @@ def _door_room_items(rooms):
                     _el.OWNER_LOBBY if is_main else _el.OWNER_ROOM)
         rk.append(int(rank))
     return gs, sh, mn, lf, rk
+
+
+_DOOR_NOT_ROOM = ("COLUMN", "WINDOW", "CUTOUT", "UNKNOWN_GEOMETRY", "UNKNOWN")
+_DOOR_SHAFT_CLASSES = ("SHAFT", "LIFT", "STAIR_WELL")
+_DOOR_MAIN_CLASSES = ("LIFT_LOBBY", "STAIRCASE", "SERVICE_LOBBY")
+
+
+def _door_poly_of(pts):
+    """A shapely polygon from points (the largest part of a multi-part), or
+    None."""
+    from shapely.geometry import Polygon as _P
+    try:
+        pg = _P([tuple(p[:2]) for p in pts])
+        if not pg.is_valid:
+            pg = pg.buffer(0)
+        if pg.geom_type == "MultiPolygon":
+            pg = max(pg.geoms, key=lambda g: g.area)
+        return pg if not pg.is_empty and pg.area > 0 else None
+    except Exception:                                 # noqa: BLE001
+        return None
+
+
+def door_rooms(rows):
+    """The rooms a door opening can lead into, for draw_doors_by_level:
+    [(outline points, is a shaft, is main accessible area, is a lift with
+    its stop here, the rank of the room a door belongs to -
+    elements.door_room_rank)] - a shaft, lift or stair well, or a room whose
+    name or family is a shaft's (elements.is_shaft_room); main: a lift
+    lobby, staircase or service lobby, or a circulation room by its name or
+    family (elements.is_main_room). Columns, windows, cut-outs and unnamed
+    shapes are not rooms. rows: the final drawing's rows ("family", "name",
+    "poly"), or a Geometry-tab finding ("cls", "poly", "label"). (Moved here
+    from the geometry engine, 2026-10-17: the final drawing's door picture
+    is Step 3's; this reshapes rooms the user changed in the Geometry tab.)"""
+    from . import elements as _el
+    out = []
+    for r in rows or ():
+        poly = r.get("poly") or []
+        if len(poly) < 3:
+            continue
+        fam = str(r.get("family") or "")
+        cls = str(r.get("cls") or "").upper()
+        if cls in _DOOR_NOT_ROOM or fam in ("Column", "Window", "Cutout", "Ignore"):
+            continue
+        cat = str(r.get("category_layer") or "").upper()
+        name = r.get("label") or r.get("name") or ""
+        shaft = (cls in _DOOR_SHAFT_CLASSES and not cat) or cat in ("SHAFT", "LIFT") or _el.is_shaft_room(name, fam)
+        main = not shaft and ((cls in _DOOR_MAIN_CLASSES and not cat) or _el.is_main_room(name, fam))
+        lift = (((cls == "LIFT" and not cat) or cat == "LIFT" or fam == "Lift")
+                and not (name and _el.LIFT_NOT_RE.search(" ".join(str(name).split()))))
+        if shaft or lift:
+            rank = _el.OWNER_SHAFT
+        elif fam == "Void" or cls in ("VOID", "STAIR_WELL"):
+            rank = _el.OWNER_NONE
+        elif cls == "STAIRCASE" and not cat and not name:
+            rank = _el.OWNER_STAIR
+        elif cls in ("LIFT_LOBBY", "SERVICE_LOBBY") and not cat and not name:
+            rank = _el.OWNER_LOBBY
+        else:
+            rank = _el.door_room_rank(name, fam or ("Staircase" if cls == "STAIRCASE" else ""), shaft=False, lift=False)
+        out.append((poly, shaft, main, lift, rank))
+    return out
+
+
+def door_solid(walls_by_class=None, quads=(), rings=(), rows=()):
+    """What is not floor for the doors' common-floor search (shapely): the
+    walls drawn ({class: [rings of one wall: its outline, then its holes]},
+    as draw_walls takes them; a bare ring is read too), window quads, glass
+    rings and the column / cut-out rows. (From the geometry engine,
+    2026-10-17.)"""
+    from shapely.geometry import Polygon as _P
+    from shapely.ops import unary_union
+    gs = []
+    for _cls, items in (walls_by_class or {}).items():
+        for item in items or ():
+            rings_ = item if (item and isinstance(item[0], (list, tuple)) and item[0]
+                              and isinstance(item[0][0], (list, tuple))) else [item]
+            reg = _P()
+            for g in sorted((_door_poly_of(r) for r in rings_), key=lambda g: -(g.area if g is not None else 0)):
+                if g is not None:
+                    reg = reg.symmetric_difference(g)
+            if not reg.is_empty:
+                gs.append(reg.buffer(0))
+    for q in list(quads or ()) + list(rings or ()):
+        g = _door_poly_of(q)
+        if g is not None:
+            gs.append(g)
+    for r in rows or ():
+        if str(r.get("cls") or "").upper() in ("COLUMN", "CUTOUT") or r.get("family") in ("Column", "Cutout"):
+            g = _door_poly_of(r.get("poly") or [])
+            if g is not None:
+                gs.append(g)
+    return unary_union(gs) if gs else None
 
 
 def door_plan(quads, gs, rk, swings=(), step3=(), trace_solid=None):
@@ -9166,6 +9266,41 @@ def _x_log_row(rec):
             "door_tag": f.get("dtag"), "cut_back_to": rec.get("cut_back_to")}
 
 
+def _plain(obj):
+    """obj with every tuple a list, every set a sorted list and every numpy
+    number a Python one - what json.dump takes. For the Step 3 result store
+    (annotate_dxf, stats["step3"])."""
+    if isinstance(obj, dict):
+        return {str(k): _plain(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_plain(v) for v in obj]
+    if isinstance(obj, (set, frozenset)):
+        return sorted((_plain(v) for v in obj), key=repr)
+    if hasattr(obj, "item") and not isinstance(obj, (str, bytes)):
+        try:
+            return obj.item()                        # a numpy scalar
+        except (TypeError, ValueError, AttributeError):
+            return str(obj)
+    if isinstance(obj, (int, float, str, bool)) or obj is None:
+        return obj
+    return str(obj)
+
+
+def prepare_floors_ahead(src_path, unit_override, floors, rule_overrides=None):
+    """Step 2 is done: work the drawing's preparation out now - the segments,
+    X marks, columns, hatches, door swings, hanging walls (_prepare_floors)
+    - and keep it in the prep cache, so the first Generate finds it ready.
+    The drawing is the copy Step 2 parsed (dxfio keeps the last two parsed
+    drawings in memory), the cache key is _prepared's own, so nothing is
+    worked out twice. Replaces the geometry engine's background run
+    (2026-10-17): what it computes is what Step 3 reads. Returns the prep
+    (None when the cache is off and nothing was kept)."""
+    rule = rule_book.resolve(rule_overrides)
+    doc, msp, units = load_document(src_path, unit_override, readonly=True)
+    return _prepared(src_path, unit_override, floors, rule, False,
+                     lambda: _prepare_floors(doc, msp, units, floors, rule))
+
+
 def _floor_pass(job):
     """One floor's rooms with that floor's family rules in force (see
     _floor_pass_rules); the module's own rules are restored after."""
@@ -11887,10 +12022,16 @@ def _floor_pass_rules(job):
 
             def _log_space(s_, fate_, label_=None, fam_=None, why_=None):
                 b_ = s_["g"].bounds
+                g_ = s_["g"]
+                if g_.geom_type != "Polygon":
+                    g_ = max(getattr(g_, "geoms", [g_]), key=lambda q_: q_.area)
+                # (the outline as traced, for the Step 3 result store: the
+                # Geometry tab and the comparison read the spaces from it)
                 space_log.append({"fate": fate_, "label": (" ".join(str(label_).split()) if label_ else None),
                                   "family": fam_, "sqm": round(s_["g"].area / 1e6, 2), "how": s_.get("how"),
                                   "why": why_, "at": [round((b_[0] + b_[2]) / 2.0), round((b_[1] + b_[3]) / 2.0)],
-                                  "texts": [ti["text"][:40] for ti in (s_.get("inside") or [])][:6]})
+                                  "texts": [ti["text"][:40] for ti in (s_.get("inside") or [])][:6],
+                                  "poly": [[round(x_, 1), round(y_, 1)] for x_, y_ in list(g_.exterior.coords)[:-1]]})
 
             def _draw_space(s_):
                 g_ = s_["g"]
@@ -14794,6 +14935,12 @@ def annotate_dxf(src_path, dst_path, floors, results, family_overrides=None,
 
     traced_any = False
     n_before = len(msp)                # what is drawn below: the element engine reads it
+    # The Step 3 result store (stats["step3"], 2026-10-17): everything this
+    # run decided, per floor - walls, doors with their kinds and lines,
+    # columns, glass, windows, cut-outs, every room with its confidence, the
+    # spaces and the X marks - kept once, read by the Geometry tab, the
+    # comparison, the final drawing and Trace instead of a second engine.
+    store_floors = {}
     for floor, res, job_ in zip(floors, passes, jobs):
         floor_poly = [tuple(p) for p in floor["polygon"]]
         floor_name = floor["name"]
@@ -14801,6 +14948,7 @@ def annotate_dxf(src_path, dst_path, floors, results, family_overrides=None,
         merged = res["merged"]
         text_status = res["text_status"]
         floor_family_overrides = res["floor_family_overrides"]
+        rooms_out, cols_drawn, door_lines_drawn = [], [], []   # this floor's part of the result store
 
         # What the rooms and the doors settle together (Test_2): the stair's
         # open well, a shaft's room on AI_MEP and up to its door line, a
@@ -15112,7 +15260,8 @@ def annotate_dxf(src_path, dst_path, floors, results, family_overrides=None,
             n_ = draw_doors(doc, msp, units, res["doors"], kinds=res.get("door_kinds"),
                             levels=res.get("door_levels"), sides=res.get("door_sides"),
                             rooms=[g for g in (_merged_geom(d) for d in merged) if g is not None],
-                            owners=door_owner_sides, lines=door_line_list, dirs=door_dirs_)
+                            owners=door_owner_sides, lines=door_line_list, dirs=door_dirs_,
+                            out_lines=door_lines_drawn)
             stats["doors_drawn"] = stats.get("doors_drawn", 0) + sum(n_.values())
             for lev_, c_ in n_.items():
                 stats["doors_drawn_" + lev_] = stats.get("doors_drawn_" + lev_, 0) + c_
@@ -15152,6 +15301,7 @@ def annotate_dxf(src_path, dst_path, floors, results, family_overrides=None,
             for pts in ((prep.get("columns") or {}).get("columns") or {}).get(floor_name) or []:
                 draw_column(doc, msp, units, pts)
                 stats["columns_drawn"] = stats.get("columns_drawn", 0) + 1
+                cols_drawn.append([[float(p[0]), float(p[1])] for p in pts])
         # Windows found in the walls (X marks that are not shafts).
         if res.get("windows") and not family_filter:
             if WINDOW_LAYER not in doc.layers:
@@ -15188,6 +15338,7 @@ def annotate_dxf(src_path, dst_path, floors, results, family_overrides=None,
                     continue                          # the column is drawn already
                 draw_column(doc, msp, units, c["poly"], x_tag=c.get("x_tag"))
                 stats["x_columns_drawn"] = stats.get("x_columns_drawn", 0) + 1
+                cols_drawn.append([[float(p[0]), float(p[1])] for p in c["poly"]])
         # The user's own rules run last, on the finished boundaries: they
         # reshape, drop or refile what the drawing pass decided, and they
         # are deliberately the last word so their effect is visible rather
@@ -15251,6 +15402,7 @@ def annotate_dxf(src_path, dst_path, floors, results, family_overrides=None,
                 outline_ent = _draw_rect(msp, mn_x, mn_y, mx_x, mx_y,
                                          layer=layer_name, color=color,
                                          units=units)
+            conf = None
             if outline_ent is not None:
                 conf = _boundary_confidence(d, fam["name"])
                 if conf is not None:
@@ -15283,6 +15435,20 @@ def annotate_dxf(src_path, dst_path, floors, results, family_overrides=None,
                 "label": d["label"], "label_xy": (lx, ly),
                 "pts": (list(d["poly"]) if d.get("poly") else
                         [(mn_x, mn_y), (mx_x, mn_y), (mx_x, mx_y), (mn_x, mx_y)]),
+                "cutout_of": d.get("cutout_of")})
+            # the room as written, for the Step 3 result store
+            rooms_out.append({
+                "label": " ".join(str(d.get("label") or "").split()), "family": fam["name"], "layer": layer_name,
+                "poly": [[round(float(p[0]), 1), round(float(p[1]), 1)] for p in drawn_records[-1]["pts"]],
+                "holes": [[[round(float(p[0]), 1), round(float(p[1]), 1)] for p in h]
+                          for h in (d.get("holes") or []) if len(h) >= 3],
+                "source": d.get("source"), "x_class": d.get("x_class"), "x_step": d.get("x_step"),
+                "x_why": d.get("x_why"), "cell": bool(d.get("cell")), "sr_no": d.get("sr_no"),
+                "absorbed_srs": [s_ for s_ in (d.get("absorbed_srs") or []) if s_ is not None],
+                "at": [round(float(lx)), round(float(ly))],
+                "confidence": (round(float(conf[0]), 3) if conf and conf[0] is not None else None),
+                "reasons": [str(w_) for w_ in (conf[1] if conf and len(conf) > 1 and conf[1] else [])],
+                "evidence": [str(x_) for x_ in (d.get("evidence") or [])][:12],
                 "cutout_of": d.get("cutout_of")})
             # every boundary whose label states a size: drawn / stated
             want = declared_size(d["label"] or "")
@@ -15327,8 +15493,37 @@ def annotate_dxf(src_path, dst_path, floors, results, family_overrides=None,
         # This runs after the draw loop so a boundary held back by
         # family_filter reports as 'filtered' rather than 'drawn'.
         stats.setdefault("text_status_by_floor", {})[floor_name] = dict(text_status)
+        # this floor's part of the Step 3 result store
+        store_floors[floor_name] = {
+            "plate": [[float(x), float(y)] for x, y in floor_poly],
+            "layer": floor.get("layer") or "", "usage": floor.get("usage"),
+            "walls": res.get("walls") or {},
+            "doors": res.get("doors") or [],
+            "door_kinds": res.get("door_kinds") or [], "door_levels": res.get("door_levels") or [],
+            "door_sides": res.get("door_sides") or [],
+            "door_owners": door_owner_sides, "door_lines": door_lines_drawn, "door_dirs": door_dirs_,
+            "door_review": res.get("door_review") or [], "shaft_review": res.get("shaft_review") or [],
+            "glass": res.get("glass") or [],
+            "windows": [{"poly": w.get("poly"), "x_tag": w.get("x_tag")} for w in (res.get("windows") or [])],
+            "cutouts": [{"poly": c.get("poly"), "name": c.get("name"), "bbox": c.get("bbox"), "why": c.get("why"),
+                         "x_tag": c.get("x_tag")} for c in (res.get("cutouts") or [])],
+            "columns": cols_drawn,
+            "hanging_walls": [hw for hw, _g in floor_hanging],
+            "rooms": rooms_out,
+            "spaces": res.get("spaces") or [],
+            "x_placement": res.get("x_placement") or [],
+            "lobby_bank_lines": res.get("lobby_bank_lines") or [],
+            "wall_veto": res.get("wall_veto") or [],
+            "locked": res.get("locked"),
+            "text_status": dict(text_status),
+            "timings": res.get("timings"),
+        }
 
     stats["boundary_method"] = "trace" if traced_any else "raycast"
+    stats["step3"] = _plain({"version": 1, "code": _code_stamp(), "units": units.to_ui(),
+                             "project": project_name or "", "family_filter": family_filter or "",
+                             "written": time.strftime("%Y-%m-%d %H:%M:%S"),
+                             "floors": store_floors})
 
     # The element identification engine (elementid): every door, window and
     # cut-out, every shaft, lift, staircase, void and lobby drawn above is

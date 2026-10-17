@@ -12,6 +12,7 @@ import functools
 import json
 import os
 import re
+import threading
 import uuid
 
 from flask import (Flask, Response, abort, jsonify, render_template, request,
@@ -28,7 +29,7 @@ from .dxf_reader import (MIN_FLOOR_AREA_SQM, _FAMILY_RULES, annotate_dxf,
 from .area_statement import write_area_statement
 from .geomextract import describe, extract_geometry, merge_polygons, trace_at
 from . import cadview
-from . import geoengine, geocompare
+from . import geoengine, geocompare, step3store
 from . import jobs
 from .pipeline import analyse_areas, build_qa, list_layers
 from .readback import read_drawn_boundaries
@@ -144,6 +145,10 @@ def _paths(token):
         # Step 5: the one drawing the user settled on from both outputs
         "final_dxf":       os.path.join(OUTPUT_DIR, token + "_final.dxf"),
         "final_json":      os.path.join(OUTPUT_DIR, token + "_final.json"),
+        # the Step 3 result store (step3store.py): everything the last
+        # Generate decided, read by the Geometry tab, the comparison, the
+        # final drawing and Trace - the one source after Step 3
+        "step3_json":      os.path.join(OUTPUT_DIR, token + "_step3.json"),
     }
 
 
@@ -670,14 +675,17 @@ def extract():
 
     for stale in ("annotated", "qa_xlsx", "qa_json", "preview", "preview_base"):
         _quiet_remove(paths[stale])
-    # The geometry side starts now, in a process of its own, on the same
-    # floors: it reads no texts, so it need not wait for them, and it is
-    # ready (or nearly) by the time Step 4 is opened.
-    for stale in ("geo_json", "geo_dxf", "geo_final", "geo_cmp_json",
+    # Everything after Step 3 is read from the Step 3 result store, which
+    # this new extraction makes stale.
+    for stale in ("step3_json", "geo_json", "geo_dxf", "geo_final", "geo_cmp_json",
                   "geo_cmp_xlsx", "geo_cmp_dxf"):
         _quiet_remove(paths[stale])
-    _geo_bg_start(token, paths, [{"name": f["name"], "polygon": f["polygon"]}
-                                 for f in selected], unit_override)
+    _GEO_CTX.pop(token, None)
+    # The drawing's preparation for Step 3 (segments, X marks, columns,
+    # hatches, door swings) is worked out now, on the copy just parsed, so
+    # the first Generate finds it in the prep cache (2026-10-17: in place
+    # of the geometry engine's run in a process of its own).
+    _prep_ahead_start(token, paths, selected, unit_override)
 
     return jsonify({
         "ok": True,
@@ -724,26 +732,28 @@ def geometry():
     return jsonify(dict(geo, ok=True))
 
 
-# Walls and texts of the floors last read by /geometry, per upload, so a
-# click in the drawing is traced without reading the file again.
+# The walls a click is traced against (Trace in the Geometry tab), per
+# upload: Step 3's walls, doors and plate from the result store (or, for an
+# upload with no Step 3 run, what /geometry read).
 _GEO_CTX = {}
 
 
 def _geo_context(token, floor):
-    """Read the walls again (after a server restart) for Trace."""
+    """The Trace context for one floor, built from the Step 3 result store
+    (after a server restart, or the first click): no drawing is read."""
     paths = _paths(token)
-    if not os.path.exists(paths["results"]):
+    store = step3store.read(paths["step3_json"])
+    if store is None:
         return None
-    cache = _read_json(paths["results"])
-    meta = _read_json(paths["meta"]) if os.path.exists(paths["meta"]) else {}
-    ctx = {}
+    cache = _read_json(paths["results"]) if os.path.exists(paths["results"]) else {}
     try:
-        extract_geometry(paths["dxf"], cache.get("selected", []), {},
-                         unit_override=_unit_of(meta), keep_context=ctx)
+        ctx = step3store.trace_context(store, cache.get("results") or {})
     except Exception as exc:                          # noqa: BLE001
         _log_exc("geometry context", exc)
         return None
     _GEO_CTX[token] = ctx
+    while len(_GEO_CTX) > 3:
+        _GEO_CTX.pop(next(iter(_GEO_CTX)))
     return ctx.get(floor)
 
 
@@ -953,6 +963,7 @@ def annotate():
     # Ticked "Draw only my selection": the Geometry tab's shapes are the
     # whole output; unticked (no geometry sent), the texts drive it all.
     geo = _geometry_decisions(paths, data.get("geometry"))
+    _prep_ahead_wait(token)
 
     try:
         stats = annotate_dxf(paths["dxf"], paths["annotated"], selected,
@@ -967,6 +978,21 @@ def annotate():
     except Exception as exc:                          # noqa: BLE001
         _log_exc("annotate", exc)
         return _fail("Annotation failed. See the server log for detail.", 500)
+
+    # The Step 3 result store: what this run decided, for every step after
+    # (step3store.py). A run of one family or of the Geometry tab's shapes
+    # alone is an export, not the drawing's rooms: the store of the last
+    # full run stands.
+    step3 = stats.pop("step3", None)
+    if step3 is not None and not family_filter and not (geo and data.get("geometry_only")):
+        try:
+            step3store.write(paths["step3_json"], step3)
+        except OSError as exc:
+            _log_exc("annotate/step3 store", exc)
+        # what was derived from the previous run no longer matches
+        for k in ("geo_json", "geo_dxf", "geo_final", "geo_cmp_json", "geo_cmp_xlsx", "geo_cmp_dxf"):
+            _quiet_remove(paths[k])
+        _GEO_CTX.pop(token, None)
 
     # How these boundaries were made, for the text-vs-geometry comparison:
     # it compares against this DXF and must say when it was not the text
@@ -1577,65 +1603,66 @@ def _stage_revision(storage, token, side, staged, floor_layer, unit_override):
                          unit_override=unit_override)
 
 
-# ------------------------------------------------------- geometry engine (AI)
-# Geometry runs started by Proceed in Step 2: token -> {"pool", "future"}.
-_GEO_BG = {}
+# ------------------------------------------------------- after Step 2 / Step 3
+# The drawing's preparation for Step 3, started when Step 2's extraction is
+# done: token -> the thread working it out (dxf_reader.prepare_floors_ahead
+# on the copy Step 2 parsed, into the prep cache Step 3 reads).
+_PREP_AHEAD = {}
 
 
-def _geo_bg_stop(token):
-    """End a background geometry run for this upload, if one is going."""
-    bg = _GEO_BG.pop(token, None)
-    if not bg:
-        return
-    try:
-        bg["pool"].shutdown(wait=False, cancel_futures=True)
-    except Exception:                                 # noqa: BLE001
-        pass
-    for proc in list((getattr(bg["pool"], "_processes", None) or {}).values()):
-        try:
-            proc.terminate()
-        except Exception:                             # noqa: BLE001
-            pass
-
-
-def _geo_bg_start(token, paths, floors, unit_override):
-    _geo_bg_stop(token)
+def _prep_ahead_start(token, paths, floors, unit_override):
     if not floors:
         return
-    try:
-        from concurrent.futures import ProcessPoolExecutor
-        pool = ProcessPoolExecutor(max_workers=1)
-        fut = pool.submit(geoengine.run_to_files, paths["dxf"], floors, unit_override,
-                          paths["geo_json"], paths["geo_dxf"], list_families())
-    except Exception as exc:                          # noqa: BLE001
-        _log_exc("geometry in the background", exc)
+
+    def work():
+        try:
+            from .dxf_reader import prepare_floors_ahead
+            prepare_floors_ahead(paths["dxf"], unit_override,
+                                 [dict(f) for f in floors])
+        except Exception as exc:                      # noqa: BLE001
+            _log_exc("prepare ahead", exc)
+
+    t = threading.Thread(target=work, name="prep-ahead-" + token[:8], daemon=True)
+    _PREP_AHEAD[token] = t
+    t.start()
+
+
+def _prep_ahead_wait(token):
+    """Generate pressed while the preparation is still being worked out:
+    wait for it rather than work it out a second time (Stop ends the wait)."""
+    t = _PREP_AHEAD.get(token)
+    if t is None:
         return
-    _GEO_BG[token] = {"pool": pool, "future": fut}
-    fut.add_done_callback(lambda _f: pool.shutdown(wait=False))
+    while t.is_alive():
+        jobs.check()
+        t.join(0.5)
+    _PREP_AHEAD.pop(token, None)
 
 
-def _geo_bg_wait(token):
-    """Step 4 opened while Proceed's geometry run is still going: wait for
-    it (Stop on Step 4 ends it). True when it finished and wrote its
-    findings."""
-    bg = _GEO_BG.get(token)
-    if not bg:
-        return False
-    fut = bg["future"]
-    import concurrent.futures as cf
-    try:
-        while not fut.done():
-            jobs.check()
-            cf.wait([fut], timeout=0.5)
-    except jobs.Stopped:
-        _geo_bg_stop(token)
-        raise
-    _GEO_BG.pop(token, None)
-    try:
-        return bool(fut.result())
-    except Exception as exc:                          # noqa: BLE001
-        _log_exc("geometry in the background", exc)
-        return False
+def _source_doc(paths, meta):
+    """The uploaded drawing, open for a new output to be drawn into: the
+    Step 3 drawing kept in memory (dxfio keeps what Generate wrote) with
+    everything this app drew taken off (_drop_boundaries) - the next steps
+    parse no file - else the uploaded file itself. (doc, msp, units)."""
+    from .dxfio import load_document
+    unit = _unit_of(meta)
+    if os.path.exists(paths["annotated"]):
+        try:
+            doc, msp, units = load_document(paths["annotated"], unit)
+            _drop_boundaries(msp)
+            return doc, msp, units
+        except Exception as exc:                      # noqa: BLE001
+            _log_exc("source drawing from the Step 3 drawing", exc)
+    return load_document(paths["dxf"], unit)
+
+
+def _step3_store(paths):
+    """The Step 3 result store, or None with the message to show."""
+    store = step3store.read(paths["step3_json"])
+    if store is None:
+        return None, ("Generate the boundaries first (Step 3): the geometry findings, the comparison "
+                      "and the final drawing are read from that run.")
+    return store, None
 
 
 def _geo_floors(paths):
@@ -1670,8 +1697,7 @@ def _geo_dxf_current(paths, meta):
     if (os.path.exists(paths["geo_dxf"]) and
             os.path.getmtime(paths["geo_dxf"]) >= os.path.getmtime(paths["geo_review"])):
         return
-    from .dxfio import load_document, set_insunits
-    doc, _msp, units = load_document(paths["dxf"], _unit_of(meta))
+    doc, _msp, units = _source_doc(paths, meta)
     geoengine.write_dxf(doc, units, _geo_result(paths), paths["geo_dxf"])
 
 
@@ -1683,9 +1709,19 @@ def floors_levels():
     return jsonify({"ok": True, "levels": [plate_levels(str(n)[:200]) for n in names[:500]]})
 
 
+def _geo_findings_current(paths):
+    """The Geometry tab's findings file is the Step 3 result store's: True
+    when it exists and is no older than the store."""
+    if not os.path.exists(paths["geo_json"]) or not os.path.exists(paths["step3_json"]):
+        return False
+    return os.path.getmtime(paths["geo_json"]) >= os.path.getmtime(paths["step3_json"])
+
+
 @app.route("/geoengine/run", methods=["POST"])
 def geoengine_run():
-    """Run the geometry engine on the Step 2 floors. It reads no texts."""
+    """The Geometry tab's findings: Step 3's rooms, walls, doors, columns
+    and glass, read from the Step 3 result store (2026-10-17). Nothing is
+    found again here: the one run that found them is Step 3's."""
     data = request.get_json(silent=True) or {}
     token = data.get("token")
     if not _valid_token(token):
@@ -1696,30 +1732,27 @@ def geoengine_run():
     floors, meta = _geo_floors(paths)
     if not floors:
         return _fail("Pick the floors in Step 2 and extract the texts first.", 404)
-    if data.get("rerun"):
-        _geo_bg_stop(token)
-    elif _geo_bg_wait(token) and os.path.exists(paths["geo_json"]):
-        return jsonify({"ok": True, "cached": True, "background": True,
-                        "result": _geo_result(paths)})
-    if not data.get("rerun") and os.path.exists(paths["geo_json"]):
+    store, why = _step3_store(paths)
+    if store is None:
+        return _fail(why, 409)
+    if not data.get("rerun") and _geo_findings_current(paths):
+        if token not in _GEO_CTX:
+            _geo_context(token, None)
         return jsonify({"ok": True, "cached": True, "result": _geo_result(paths)})
     try:
-        from .dxfio import load_document, set_insunits
-        loaded = load_document(paths["dxf"], _unit_of(meta))
-        ctx = {}
-        result = geoengine.run(paths["dxf"], floors, _unit_of(meta),
-                               loaded=loaded, keep_context=ctx)
-        _GEO_CTX[token] = ctx                         # for Trace in Step 5
+        result = step3store.findings(store, list_families())
+        cache = _read_json(paths["results"]) if os.path.exists(paths["results"]) else {}
+        _GEO_CTX[token] = step3store.trace_context(store, cache.get("results") or {})   # for Trace
         while len(_GEO_CTX) > 3:
             _GEO_CTX.pop(next(iter(_GEO_CTX)))
-        # the geometry DXF starts as the engine's defaults; Generate in
-        # Step 5 rewrites it with the user's choices
-        geoengine.write_dxf(loaded[0], loaded[2],
-                            geoengine.build_final(result, None, list_families()),
+        # the geometry DXF starts as Step 3's rooms; Generate in the tab
+        # rewrites it with the user's choices
+        doc, _msp, units = _source_doc(paths, meta)
+        geoengine.write_dxf(doc, units, geoengine.build_final(result, None, list_families()),
                             paths["geo_dxf"])
     except Exception as exc:                          # noqa: BLE001
         _log_exc("geoengine/run", exc)
-        return _fail("The geometry analysis failed. See the server log for detail.", 500)
+        return _fail("The geometry findings could not be read from the Step 3 run. See the server log.", 500)
     _write_json(paths["geo_json"], result)
     # an older output and comparison no longer match these findings
     for k in ("geo_final", "geo_cmp_json", "geo_cmp_xlsx", "geo_cmp_dxf"):
@@ -1746,9 +1779,8 @@ def geoengine_generate():
     try:
         result = _read_json(paths["geo_json"])
         final = geoengine.build_final(result, decisions, list_families())
-        from .dxfio import load_document, set_insunits
         from .dxf_reader import _move_texts
-        doc, msp, units = load_document(paths["dxf"], _unit_of(meta))
+        doc, msp, units = _source_doc(paths, meta)
         moves = []
         if isinstance(data.get("text_moves"), dict) and os.path.exists(paths["results"]):
             moves = _text_moves(_read_json(paths["results"]).get("results", {}), data["text_moves"])
@@ -1968,6 +2000,9 @@ def geoengine_final():
     paths = _paths(token)
     if not os.path.exists(paths["geo_cmp_json"]):
         return _fail("Open the comparison first.", 404)
+    store, why = _step3_store(paths)
+    if store is None:
+        return _fail(why, 409)
     decisions = data.get("decisions") if isinstance(data.get("decisions"), dict) else {}
     cmp = _read_json(paths["geo_cmp_json"])
     if not cmp["rows"] or "final_default" not in cmp["rows"][0]:
@@ -2016,20 +2051,20 @@ def geoengine_final():
         counts[fam] = counts.get(fam, 0) + 1
     floors, meta = _geo_floors(paths)
     try:
-        from .dxfio import load_document, set_insunits
-        doc, msp, units = load_document(paths["dxf"], _unit_of(meta))
-        _drop_boundaries(msp)                         # only the settled boundaries count
+        from .dxfio import set_insunits
+        # the drawing to draw into: the one Step 3 wrote, kept in memory,
+        # with Step 3's boundaries taken off - only the settled ones count
+        doc, msp, units = _source_doc(paths, meta)
         f = units.from_mm
-        # the text-based drawing the comparison paired with (stored by name)
-        text_dxf = cmp.get("text_dxf") or ""
-        if text_dxf and not os.path.isabs(text_dxf):
-            text_dxf = os.path.join(OUTPUT_DIR, text_dxf)
-        conf_index = _text_confidence_index(text_dxf or paths["annotated"], _unit_of(meta))
+        # Step 3's rooms with their scores, its stair wells, columns and
+        # doors: from the Step 3 result store (2026-10-17) - the Step 3
+        # drawing is not read back
+        conf_index = step3store.confidence_index(store)
         # The stair's open well - an X the X sequence made a void, between
         # the flights of its staircase: what Step 3 cut out of the staircase
         # as a hole on AI_VOID is a hole here too, and a geometry boundary
         # over it gives way (P285: the well in ST-01).
-        side_ = _text_side_shapes(text_dxf or paths["annotated"], _unit_of(meta))
+        side_ = step3store.side_shapes(store)
         wells = side_["wells"]
         well_holes = [[tuple(p) for p in list(w.exterior.coords)[:-1]] for w in wells]
         if wells:
@@ -2044,7 +2079,9 @@ def geoengine_final():
                         continue
                 kept_rows.append(r)
             rows = kept_rows
-        geo = _read_json(paths["geo_json"]) if os.path.exists(paths["geo_json"]) else {}
+        # the walls, doors, glass, hanging walls and doubtful openings: Step
+        # 3's, from the store (what the geometry engine used to find again)
+        geo = step3store.as_geo(store)
         qa_ = _read_json(paths["qa_json"]) if os.path.exists(paths.get("qa_json") or "") else {}
         # how each room was made, read before its outline is settled below:
         # the Step 3 tag of a room taken from the texts (an "X" is an X mark
@@ -2112,8 +2149,8 @@ def geoengine_final():
         for h in holes:
             msp.add_lwpolyline([(f(x), f(y)) for x, y in h], close=True,
                                dxfattribs={"layer": _LN.VOID, "color": 256})
-        from .dxf_reader import draw_walls, veto_walls, draw_hanging_walls, draw_doors_by_level, DRAW_DOORS, draw_glass, draw_column
-        from .geoengine import door_rooms, door_solid
+        from .dxf_reader import (draw_walls, veto_walls, draw_hanging_walls, draw_doors_by_level, DRAW_DOORS, draw_glass,
+                                 draw_column, door_rooms, door_solid)
         # the columns on AI_COLUMN (outline, hatch, "C"): Step 3's - never
         # filled as wall
         user_cols = [r for r in rows if r["family"] == "Column"]
@@ -2164,36 +2201,6 @@ def geoengine_final():
     return jsonify({"ok": True, "boundaries": len(rows), "families": counts,
                     "outlines_cleaned": cleaned, "step3_decisions_not_taken": not_taken,
                     "download": "/download/final_dxf/" + token})
-
-
-def _text_confidence_index(path, unit_override):
-    """The score every room of the text-based drawing carries (XDATA put
-    there by Step 3), with where it is: [(centroid x, y mm, area sq.m,
-    tag source, label, score, reasons)]."""
-    out = []
-    if not path or not os.path.exists(path):
-        return out
-    try:
-        from .dxfio import load_document
-        from .dxf_reader import room_confidence_tag, room_tag
-        from shapely.geometry import Polygon
-        doc, msp, units = load_document(path, unit_override, readonly=True)
-        for e in msp.query("LWPOLYLINE"):
-            score, why = room_confidence_tag(e)
-            if score is None:
-                continue
-            pts = [(units.to_mm(x), units.to_mm(y)) for x, y in e.get_points("xy")]
-            if len(pts) < 3:
-                continue
-            pg = Polygon(pts).buffer(0)
-            if pg.is_empty:
-                continue
-            src, label = room_tag(e)
-            c = pg.centroid
-            out.append((c.x, c.y, pg.area / 1e6, src, label, score, why))
-    except Exception as exc:                          # noqa: BLE001
-        _log_exc("geoengine/final confidence index", exc)
-    return out
 
 
 def _final_tag_of(row, index):
@@ -2256,67 +2263,6 @@ def _tag_final_room(doc, entity, row, index):
         _tag_room(doc, entity, "X" if row.get("x") else "", name, (score, why))
     except Exception as exc:                          # noqa: BLE001
         _log_exc("geoengine/final confidence", exc)
-
-
-def _text_stair_wells(path, unit_override):
-    """The holes on AI_VOID standing in a staircase of the text-based
-    drawing (the open well between its flights: an X the X sequence made a
-    void),
-    as shapely polygons, mm."""
-    return _text_side_shapes(path, unit_override)["wells"]
-
-
-def _text_side_shapes(path, unit_override):
-    """From the text-based drawing, in one read: "wells" - the holes on
-    AI_VOID standing in a staircase (the stair's open well, a void of the X
-    sequence) - "columns" - the columns on AI_COLUMN (Step 3's: its column
-    finder's and the X sequence's) - and "doors" - Step 3's doors, each
-    (its opening, the middle of its line, the way into the room it belongs
-    to): the final drawing draws each where Step 3 did (dxf_reader.
-    door_hints). Shapely polygons, mm."""
-    out = {"wells": [], "columns": [], "doors": []}
-    if not path or not os.path.exists(path):
-        return out
-    try:
-        from .dxfio import load_document
-        from .dxf_reader import _polyline_points, _is_closed, family_from_layer, _FAMILY_RULES, door_quad, door_room_dir
-        from shapely.geometry import Polygon
-        doc, msp, units = load_document(path, unit_override, readonly=True)
-        voids, stairs, cols = [], [], []
-        door_layers = {_LN.DOOR_PRIMARY, _LN.DOOR_SECONDARY, _LN.OLD_DOOR_PRIMARY, _LN.OLD_DOOR_SECONDARY}   # a Step 3 drawing of before 2026-10-17 too
-        for e in msp.query("LWPOLYLINE POLYLINE"):
-            layer = (e.dxf.layer or "").upper()
-            if layer in door_layers and not _is_closed(e):
-                q = door_quad(e, units)
-                ln = _polyline_points(e, units)
-                if q and len(q) >= 3 and ln:
-                    g = Polygon([tuple(p[:2]) for p in q]).buffer(0)
-                    if not g.is_empty:
-                        out["doors"].append((g, (sum(p[0] for p in ln) / len(ln), sum(p[1] for p in ln) / len(ln)),
-                                             door_room_dir(e)))
-                continue
-            if not _is_closed(e):
-                continue
-            if layer == _LN.VOID:
-                bucket = voids
-            elif layer == _LN.COLUMN:
-                bucket = cols
-            elif _LN.is_room_layer(layer) and family_from_layer(e.dxf.layer, _FAMILY_RULES)["name"] == "Staircase":
-                bucket = stairs
-            else:
-                continue
-            pts = _polyline_points(e, units)
-            if len(pts) >= 3:
-                g = Polygon(pts).buffer(0)
-                if not g.is_empty and g.geom_type == "Polygon":
-                    bucket.append(g)
-        for v in voids:
-            if any(s_.intersection(v).area >= 0.9 * v.area for s_ in stairs):
-                out["wells"].append(v)
-        out["columns"] = cols
-    except Exception as exc:                          # noqa: BLE001
-        _log_exc("geoengine/final text shapes", exc)
-    return out
 
 
 def _same_shape(pg, pts, share=0.8):
@@ -2636,8 +2582,7 @@ def _final_door_plans(rows, geo, lift_doors, walls_by_floor, cols_by_floor, step
     a room runs to its door's line, no other crosses it; Step 3's six and X
     marks left as they are). Returns (rows, {floor: plan})."""
     from . import elements as _el
-    from .dxf_reader import door_plan, _door_room_items
-    from .geoengine import door_rooms, door_solid
+    from .dxf_reader import door_plan, _door_room_items, door_rooms, door_solid
     from shapely.geometry import Polygon
     plans = {}
     out = list(rows)
@@ -2845,13 +2790,18 @@ def geoengine_compare():
     floors, meta = _geo_floors(paths)
     if not floors:
         return _fail("Pick the floors in Step 2 and extract the texts first.", 404)
-    if not os.path.exists(paths["geo_json"]):
+    store, why = _step3_store(paths)
+    if store is None:
+        return _fail(why, 409)
+    if not _geo_findings_current(paths):
+        # the geometry side is Step 3's own result (step3store.findings)
         try:
-            result = geoengine.run(paths["dxf"], floors, _unit_of(meta))
+            _write_json(paths["geo_json"], step3store.findings(store, list_families()))
         except Exception as exc:                      # noqa: BLE001
-            _log_exc("geoengine/compare engine run", exc)
-            return _fail("The geometry analysis failed. See the server log for detail.", 500)
-        _write_json(paths["geo_json"], result)
+            _log_exc("geoengine/compare findings", exc)
+            return _fail("The geometry findings could not be read from the Step 3 run. See the server log.", 500)
+        for k in ("geo_final", "geo_cmp_json", "geo_cmp_xlsx", "geo_cmp_dxf"):
+            _quiet_remove(paths[k])
     last = (meta or {}).get("last_generate") or {}
     # The text side must be the text engine alone. Step 3's own output is
     # that only when it was a plain Generate (no Geometry tab selection, no
@@ -2868,10 +2818,16 @@ def geoengine_compare():
         if stale:
             try:
                 cache = _read_json(paths["results"])
-                annotate_dxf(paths["dxf"], text_dxf, cache.get("selected", []),
-                             cache.get("results", {}),
-                             unit_override=_unit_of(meta),
-                             project_name=meta.get("project_name") or "")
+                st_ = annotate_dxf(paths["dxf"], text_dxf, cache.get("selected", []),
+                                   cache.get("results", {}),
+                                   unit_override=_unit_of(meta),
+                                   project_name=meta.get("project_name") or "")
+                # a full run of every text: it is the Step 3 result store too
+                if st_.get("step3") is not None:
+                    step3store.write(paths["step3_json"], st_["step3"])
+                    store = st_["step3"]
+                    _write_json(paths["geo_json"], step3store.findings(store, list_families()))
+                    _GEO_CTX.pop(token, None)
             except Exception as exc:                  # noqa: BLE001
                 _log_exc("geoengine/compare text run", exc)
                 return _fail("Could not run the text engine for the comparison.", 500)
@@ -2938,6 +2894,7 @@ _DOWNLOAD_KINDS = {
     "geo_cmp_json":    ("_text_vs_geometry.json", "json"),
     "geo_cmp_dxf":     ("_text_vs_geometry.dxf", "dxf"),
     "final_dxf":       ("_final.dxf", "dxf"),
+    "step3_json":      ("_step3_elements.json", "json"),
 }
 _MIME = {
     "sheet": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
