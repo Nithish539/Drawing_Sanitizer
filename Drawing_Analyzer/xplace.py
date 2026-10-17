@@ -650,20 +650,15 @@ def x_facts(bbox, mass, texts=(), is_name=None, finder_kind=None, glazing=0, cut
             f[key] = tt
     # a column's cross (step 6)
     c = Point((x0 + x1) / 2.0, (y0 + y1) / 2.0)
-    for col in mass.columns:
-        if col.contains(c) or (col.intersects(B) and col.intersection(B).area >= 0.8 * B.area):
-            f["column"] = "on a column"
-            return f
+    if _on_column(B, mass.columns):
+        f["column"] = ON_A_COLUMN
+        return f
     if mass.ringed_column(B):
         f["column"] = "ringed by a steel column's outline"
         return f
-    if mass.htree is not None:
-        for k in mass.htree.query(B):
-            hp = mass.hatches[k]
-            if hp.intersects(B) and hp.intersection(B).area >= IN_WALL_SHARE * B.area \
-                    and hp.area <= COLUMN_HATCH_RATIO * B.area and min(w, h) >= 0.6 * max(w, h):
-                f["column"] = "inside a solid fill no larger than itself"
-                return f
+    if _in_column_fill(B, mass.hatches, mass.htree):
+        f["column"] = IN_A_FILL
+        return f
     W = mass.W
     inW = B.intersection(W).area / B.area if (W is not None and not W.is_empty) else 0.0
     # inside a wall (steps 2, 4, 5): an opening is no thicker than a wall -
@@ -805,6 +800,61 @@ def resolve_x(f, named=False, lift_label=False, shaft_name=False, in_room=False,
     # 7 voids
     return done("void", 7, "nothing above claimed it" + (": a stair's well" if stair_well else
                                                          " (larger than {0:g} sq.m)".format(VOID_MIN_SQM) if big else ""))
+
+
+ON_A_COLUMN = "on a column"
+IN_A_FILL = "inside a solid fill no larger than itself"
+
+
+def _on_column(B, columns):
+    """The X's box B stands on one of the columns (polygons): its centre
+    inside one, or 80 % of it on one."""
+    from shapely.geometry import Point
+    x0, y0, x1, y1 = B.bounds
+    c = Point((x0 + x1) / 2.0, (y0 + y1) / 2.0)
+    for col in columns or ():
+        if col.contains(c) or (col.intersects(B) and col.intersection(B).area >= 0.8 * B.area):
+            return True
+    return False
+
+
+def _in_column_fill(B, hatches, htree):
+    """The X's box B, squarish, lies in a solid fill no larger than
+    COLUMN_HATCH_RATIO times itself (IN_WALL_SHARE of it covered): the
+    hatched column its cross marks. htree: an STRtree over hatches."""
+    if htree is None:
+        return False
+    x0, y0, x1, y1 = B.bounds
+    w, h = x1 - x0, y1 - y0
+    for k in htree.query(B):
+        hp = hatches[int(k)]
+        if hp.intersects(B) and hp.intersection(B).area >= IN_WALL_SHARE * B.area \
+                and hp.area <= COLUMN_HATCH_RATIO * B.area and min(w, h) >= 0.6 * max(w, h):
+            return True
+    return False
+
+
+def early_column(bbox, columns=(), hatches=(), htree=None):
+    """Step 00 of Step 3 (rule columns_first): whether the X at bbox (x0, y0,
+    x1, y1) is a column's cross by the two tests that read no wall - on a
+    column (ON_A_COLUMN), or inside a solid fill no larger than itself
+    (IN_A_FILL) - so the column is known before any wall is traced. The same
+    tests as x_facts (step 6 of the sequence decides the same X a column);
+    the third, a steel column's outline round the cross, reads the walls and
+    stays in the sequence. -> ON_A_COLUMN, IN_A_FILL or None."""
+    x0, y0, x1, y1 = [float(v) for v in bbox]
+    if x1 <= x0 or y1 <= y0:
+        return None
+    B = _box((x0, y0, x1, y1))
+    if _on_column(B, columns):
+        return ON_A_COLUMN
+    if htree is None and hatches:
+        from shapely.strtree import STRtree
+        hatches = list(hatches)
+        htree = STRtree(hatches)
+    if _in_column_fill(B, list(hatches or ()), htree):
+        return IN_A_FILL
+    return None
 
 
 def drop_label_strips(strips, points):

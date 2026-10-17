@@ -2175,6 +2175,63 @@ Every cell still off is a sheet convention, a shaft-naming difference, or a room
 
 `dxf_reader.py`. Scratch tools (not in the code base): `run_dxf.py` (a DXF through the whole flow), `manual_report.py`, `stepbook2.py` (the new sequence step by step on BHUB 1st: `BHUB 1st Floor/BHUB_FIRST_FLOOR - new sequence step by step.pdf`).
 
+## 2026-10-17 (night) — columns in three tiers, with a column size library (`column_library.json`)
+
+The column finder (`geoengine._column_shapes`) took one group per floor: the one standing on a grid. Columns in a second group, or on a layer it ruled out, were drawn as walls or not at all (Aquila's planted façade columns on `COLUMN_PLANTED`: `PLANT` was read as landscape). Now three tiers, all locked before the walls are traced, as before:
+
+1. **Tier 1, the floor's grid group** - unchanged. Each column is now also named by the library (`RCC 450x450`, `Centaurus 668x668` ...).
+2. **Tier 2, other drawn closed shapes with column evidence** - on a column layer (`COLUMN`, `_COL`, `COL-`, `PILLAR` ...), or this floor's own tier-1 size on a crossing of its grid lines.
+3. **Tier 3, the column size library** - a size in `column_library.json`, hatched, standing alone (no wall-layer line runs into it) and on a crossing of the floor's grid (anywhere when the floor has no grid). A hatched library size standing alone off the grid is marked on `AI_REVIEW` ("column? RCC 450x450 - off the grid"), not taken.
+
+Never taken by tiers 2 and 3: a block's box alone (INSERT), a shape holding a door's lines, a stretch of a wall (a single line running on past both ends along two opposite sides), a thin piece in a wall line, a shape inside a C / L or concrete wall, a shape outside the library's limits (150-1500 mm, aspect up to 4); and, for the library and the floor's size, a shape on a wall layer or on a layer with one of the library's `not_column_layer_words` (cut-outs, shafts, glazing, sections, services, schedules ...). Unhatched library sizes are left alone: on Centaurus they were plumbing blocks, toilet fitments and schedule bubbles. Should tiers 2 and 3 fail on a floor, its tier-1 columns stand as they are.
+
+**The library** (`column_library.json`, beside `config.json`, or the file `config.json` `"column_library"` names): RCC rectangles and round sizes, IS 808 ISHB / ISWB / ISMB, SHS, CHS, HE-A / HE-B / UC, and each project's own sizes (`projects`, applied when a match word is in the uploaded file's name or the project name; XA and Centaurus are filled in). Looked up project, floor, RCC, steel, imported, either way round, within `tolerance`. RCC comes before steel, so a 400 mm square reads RCC 400x400, not SHS 400. Editing the file needs no code change - restart the app after editing it. A missing or broken file falls back to the same lists built into `column_library.py`. `"enabled": false` switches tiers 2 and 3 off (tier 1 as before).
+
+Step 3's stats gain `columns_tier1/2/3`, `column_sizes` (by library name) and `columns_review`.
+
+### What changed on the test floors (the user's runs replayed, today's code before → after)
+
+| Floor | Columns (final drawing) | AI_WALL | Rooms |
+|---|---|---|---|
+| BHUB 1st | 18 → 18 | unchanged | 72, unchanged |
+| Aquila 2nd | 27 → 34: the 7 planted façade columns (400 x 400, `COLUMN_PLANTED`) | 88.34 → 87.22 sq.m (the same 7 were drawn as walls) | 77, unchanged |
+| Centaurus 11th | 74 → 77: a 650 x 650 column on `A-COL`, and in the turned stair core a 299 x 1140 piece and a 450 x 650 L on `A-COLUMN` (the main pass had both as columns already; the turned pass drew them as walls) | 262.62 → 262.02 sq.m | 220, unchanged |
+| P285 11th | 42 → 42 | unchanged | 118, unchanged |
+| XA 37th | 30 → 31: a 500 x 500 façade column on `SCPL_COL`, a cut-out before (cut-outs 3 → 2); the façade columns found before by their cross no longer have a wall drawn over them | 54.96 → 54.67 sq.m | 65; VRF ODU +0.07 sq.m |
+
+882 tests pass (862 + 20 new in `tests/test_column_library.py`).
+
+### Files
+
+`column_library.json` (new), `column_library.py` (new), `geoengine.py` (`_column_shapes`, `_more_columns`, `_runs_past`, `_touches_walls`, `_holds_lines`, `_seg_index`, `_size_name`; `PLANT(?!ED)`), `dxf_reader.py` (`_floor_columns` returns the tiers and the review shapes; Step 3 draws the review marks on `AI_REVIEW` and counts the tiers; the library files are in the floor-pass cache stamp), `tests/test_column_library.py` (new).
+
+## 2026-10-17 (late night) — the columns are step 00 of Step 3 (rule `columns_first`)
+
+The columns were found before the floor passes (the column finder, tiers 1-3) and locked before the early wall trace, but they were no step of their own: the first wall pass (W1, `_detect_walls`) paired a column's outline lines as wall strips, and a column found only by its cross (the X sequence, step 6) was decided after W1 and the early trace and never cut from the walls drawn (W2, W3 - `LOCKED_NEVER_WALL` has no `x_column`, `wall_polygons` got the finder's columns only). Before the column library merge, XA had walls drawn over two such columns (0.09 sq.m).
+
+Rule **`columns_first`** (group walls, **on by default**) - the sequence is now 00, 01 ... 12:
+
+- **00 columns** (timed as `00 columns ...`): the finder's columns, and every X mark that is a column's cross by the two tests that read no wall - on a column, or inside a solid fill no larger than itself (`xplace.early_column`, the same tests `x_facts` reads; step 6 of the X sequence decides the same X a column) - are locked before anything else (`columns_first_crosses`).
+- **W1**: no strip lies in a column (`w1_strips_in_columns`): the X facts, the lift lobbies, the shafts' cuts and the door evidence no longer read a column's inside as wall. The lines inside a column stay W1 faces - they bound the rooms where the finder's outline is not the drawn one: taken out too (simulated), XA's FIRE LIFT LOBBY ran over the steel column beside it (+0.90 sq.m).
+- **W2 / W3** and the spaces' blocked cells are cut round every column: the finder's, step 00's, and the X sequence's (the third cross test, a steel column's outline round the cross, reads the walls and stays in the sequence); pass 11's trace never covers an `x_column`.
+- Off: as before.
+
+### What changed on the test floors (today's merged code → rule on; the user's runs replayed)
+
+| Floor | W1 strips in columns dropped | X classes | AI_WALL (Step 3 / final) | Rooms |
+|---|---|---|---|---|
+| BHUB 1st | 0 | unchanged | unchanged | unchanged |
+| Aquila 2nd | 137 | unchanged | unchanged | unchanged |
+| Centaurus 11th | 8 | unchanged | unchanged | unchanged |
+| P285 11th | 0 | unchanged | unchanged | unchanged |
+| XA 37th | 17 | unchanged | 48.45 → 48.43 (slivers along column faces) / unchanged | unchanged |
+
+With the rule off, XA and Aquila came out identical to today's code. 892 tests pass (882 + 10 new in `tests/test_columns_first.py`).
+
+### Files
+
+`dxf_reader.py` (step 00 in `_floor_pass_rules`, `columns_for_walls`), `xplace.py` (`early_column`, `_on_column`, `_in_column_fill`, `ON_A_COLUMN`, `IN_A_FILL`; `x_facts` reads the same helpers), `rules.py` (`columns_first`), `tests/test_columns_first.py` (new).
+
 ## 2026-10-17 (night) - one engine: the geometry engine's run is gone, every step after Step 3 reads the Step 3 result store (branch `converge-step3-geoengine`, not merged)
 
 Until now Step 2's Proceed started a second engine (`geoengine.run`) in a process of its own: it parsed the drawing again, traced the walls, searched the doors and found the columns a second time, and classified every enclosed space from shape alone. The Geometry tab, the comparison and the final drawing read that second result, and the final drawing read the Step 3 drawing back from disk for the rooms' scores, the stair wells, the columns and the doors. Step 3 finds all of that in its one pass now (walls W1-W3, the X sequence, the doors, the spaces traced before any text, the columns), so the second engine found nothing Step 3 did not - it only cost a parse, a wall trace, a door search and a column pass per Generate, and a drawing of walls that could differ from Step 3's.
