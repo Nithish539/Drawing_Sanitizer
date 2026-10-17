@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 
+from . import layernames as LN
 from .dxf_reader import (ANNOTATE_LAYER, MIN_FLOOR_AREA_SQM, VOID_LAYER,
                          _FAMILY_RULES, floor_tag,
                          _is_closed, _point_in_polygon, _polyline_points,
@@ -131,8 +132,10 @@ def _collect_base(doc, msp, units, clip):
     for e, xform, _depth in iter_entities(
             doc, msp, "LINE LWPOLYLINE POLYLINE ARC CIRCLE"):
         layer = (e.dxf.layer or "0").upper()
-        # The generated boundaries are drawn separately and in colour.
-        if layer.endswith("_BOUNDARY") or layer.endswith("_VOID"):
+        # The generated boundaries are drawn separately and in colour;
+        # the app's other layers (walls, columns, windows) are not the
+        # drawing's own linework.
+        if LN.is_app_layer(layer):
             continue
         try:
             kind = e.dxftype()
@@ -205,8 +208,8 @@ def build_preview(dxf_path, unit_override=None, with_base=False):
     for e in msp.query("LWPOLYLINE POLYLINE"):
         layer = (e.dxf.layer or "0")
         upper = layer.upper()
-        is_void = upper == VOID_LAYER.upper() or upper.endswith("_VOID")
-        if not (is_void or upper.endswith("_BOUNDARY")):
+        is_void = LN.is_void_layer(upper)
+        if not (is_void or LN.is_room_layer(upper) or LN.is_floor_layer(upper)):
             continue
         pts = _polyline_points(e, units)
         if len(pts) < 3:
@@ -224,7 +227,7 @@ def build_preview(dxf_path, unit_override=None, with_base=False):
 
     for e in msp.query("TEXT MTEXT"):
         layer = (e.dxf.layer or "0")
-        if not layer.upper().endswith("_BOUNDARY"):
+        if not (LN.is_room_layer(layer) or LN.is_floor_layer(layer)):
             continue
         value = _text_value(e)
         if not value:
@@ -235,7 +238,8 @@ def build_preview(dxf_path, unit_override=None, with_base=False):
 
     if not shapes:
         raise ValueError(
-            "This drawing has no closed polylines on a '*_BOUNDARY' layer, so "
+            "This drawing has no closed polylines on a room layer (AI_<FAMILY>, "
+            "or the older *_BOUNDARY), so "
             "there is nothing to preview. Run Generate Boundaries first.")
 
     # The floor outlines are written to the same legacy layer as the
@@ -245,7 +249,8 @@ def build_preview(dxf_path, unit_override=None, with_base=False):
     outline_layer = ANNOTATE_LAYER.upper()
     floors = [s for s in shapes if s.get("floor")]
     if not floors:
-        on_outline = [s for s in shapes if s["layer"].upper() == outline_layer]
+        # the floor outline: AI_FLOOR, or ROOM_BOUNDARY in an older drawing
+        on_outline = [s for s in shapes if s["layer"].upper() in (outline_layer, LN.OLD_FLOOR)]
         floors = [s for s in on_outline if s["area"] >= MIN_FLOOR_AREA_SQM]
         if not floors and on_outline:
             floors = [max(on_outline, key=lambda s: s["area"])]

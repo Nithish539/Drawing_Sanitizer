@@ -141,6 +141,65 @@ class _SegmentIndex:
                 out.extend(self.buckets.get((cx + dx, cy + dy), ()))
         return out
 
+    def any_in_window(self, mn_x, mn_y, mx_x, mx_y):
+        c = self.cell
+        for gx in range(int(mn_x // c), int(mx_x // c) + 1):
+            for gy in range(int(mn_y // c), int(mx_y // c) + 1):
+                if self.buckets.get((gx, gy)):
+                    return True
+        return False
+
+
+class _OverlayIndex:
+    """A base index with a few more segments on top, answering exactly as
+    one index built over base + extra would: bucket by bucket the base's
+    segments first, then the extra ones - the order the nearest-wall
+    choice in _snap_to_walls depends on when two walls tie."""
+
+    __slots__ = ("base", "extra", "cell", "count")
+
+    def __init__(self, base, extra):
+        self.base, self.extra = base, extra
+        self.cell = base.cell
+        self.count = base.count + extra.count
+
+    def in_window(self, mn_x, mn_y, mx_x, mx_y):
+        c = self.cell
+        out = []
+        seen = set()
+        bb, eb = self.base.buckets, self.extra.buckets
+        for gx in range(int(mn_x // c), int(mx_x // c) + 1):
+            for gy in range(int(mn_y // c), int(mx_y // c) + 1):
+                for src in (bb, eb):
+                    for seg in src.get((gx, gy), ()):
+                        key = id(seg)
+                        if key not in seen:
+                            seen.add(key)
+                            out.append(seg)
+        return out
+
+    def near(self, x, y):
+        c = self.cell
+        cx, cy = int(x // c), int(y // c)
+        out = []
+        bb, eb = self.base.buckets, self.extra.buckets
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                out.extend(bb.get((cx + dx, cy + dy), ()))
+                out.extend(eb.get((cx + dx, cy + dy), ()))
+        return out
+
+
+def _copy_result(r):
+    """A TraceResult a caller may change without touching the cached one."""
+    return TraceResult(polygon=[tuple(p) for p in r.polygon], area_sqm=r.area_sqm,
+                       cell_area_sqm=r.cell_area_sqm, status=r.status, cells=r.cells,
+                       bbox=r.bbox, holes=[list(h) for h in r.holes],
+                       gross_area_sqm=r.gross_area_sqm, window_mm=r.window_mm)
+
+
+RASTER_CACHE_MAX = 48            # base wall rasters kept per tracer family
+
 
 class RoomTracer:
     """Wall segments indexed once; each label traced in its own window."""
@@ -163,6 +222,34 @@ class RoomTracer:
         self.index = _SegmentIndex(self.segments,
                                    cell=max(self.cell * 40, 2000.0))
         self.ok = bool(self.segments)
+        # A tracer extended with a few more segments (extended()) shares
+        # its base's index and wall rasters: the base walls are indexed
+        # and rasterised once, the extra lines added on top.
+        self._root = self
+        self._extra = None               # _SegmentIndex of the extra segments
+        self._rasters = {}               # window -> (base wall raster, any base segment)
+        self._windows = {}               # (px, py, half, simplify, snap) -> TraceResult
+
+    def extended(self, extra):
+        """The same tracer over these segments plus `extra` - exactly what
+        RoomTracer(segments + extra, same settings) traces, without
+        indexing and rasterising the base walls again."""
+        extra = list(extra)
+        root = self._root
+        t = RoomTracer.__new__(RoomTracer)
+        t.cell, t.seal = self.cell, self.seal
+        t.max_area_sqm, t.max_cells = self.max_area_sqm, self.max_cells
+        t.windows = self.windows
+        t.segments = self.segments + extra
+        own = (list(self._extra_segs) if self._extra is not None else []) + extra
+        t._extra_segs = own
+        t._extra = _SegmentIndex(own, cell=root.index.cell)
+        t.index = _OverlayIndex(root.index, t._extra)
+        t.ok = bool(t.segments)
+        t._root = root
+        t._rasters = root._rasters
+        t._windows = {}
+        return t
 
     # -- public ----------------------------------------------------------
     def trace(self, px: float, py: float,
@@ -173,7 +260,7 @@ class RoomTracer:
 
         last = TraceResult(status="leaked")
         for half in self.windows:
-            res = self._trace_window(px, py, half, simplify_cells, snap)
+            res = self._window_cached(px, py, half, simplify_cells, snap)
             if res.status == "ok":
                 return res
             if res.status == "expand":
@@ -185,6 +272,60 @@ class RoomTracer:
         return last
 
     # -- one window ------------------------------------------------------
+    def _window_cached(self, px, py, half, simplify_cells, snap):
+        """_trace_window, once per window: the same label is traced again
+        and again from the same point (a leak closed one opening at a time,
+        a stated size checked). An extended tracer whose extra lines come
+        nowhere near the window - nor within snapping reach of it - sees
+        exactly the base walls there, so it takes the base's answer."""
+        key = (px, py, half, simplify_cells, snap)
+        got = self._windows.get(key)
+        if got is None:
+            root = self._root
+            if root is not self:
+                pad = 4.0 * self.cell        # beyond the snap reach (2.5 cells)
+                if not self._extra.any_in_window(px - half - pad, py - half - pad,
+                                                 px + half + pad, py + half + pad):
+                    got = root._window_cached(px, py, half, simplify_cells, snap)
+                    self._windows[key] = got
+                    return _copy_result(got)
+            got = self._trace_window(px, py, half, simplify_cells, snap)
+            self._windows[key] = got
+        return _copy_result(got)
+
+    def _wall_raster(self, mn_x, mn_y, mx_x, mx_y, nx, ny):
+        """(wall raster, any segment in the window): the base walls,
+        rasterised once per window and kept, with this tracer's extra
+        segments drawn on top."""
+        cell = self.cell
+        root = self._root
+        key = (mn_x, mn_y, nx, ny)
+        got = root._rasters.get(key)
+        if got is None:
+            segs = root.index.in_window(mn_x, mn_y, mx_x, mx_y)
+            base = bytearray(nx * ny)
+            for seg in segs:
+                clipped = _clip(seg[0], seg[1], seg[2], seg[3],
+                                mn_x, mn_y, mx_x, mx_y)
+                if clipped is None:
+                    continue
+                _rasterise(base, nx, ny, mn_x, mn_y, cell, *clipped)
+            got = (bytes(base), bool(segs))
+            if len(root._rasters) >= RASTER_CACHE_MAX:
+                root._rasters.pop(next(iter(root._rasters)))
+            root._rasters[key] = got
+        wall = bytearray(got[0])
+        any_seg = got[1]
+        if self._extra is not None:
+            for seg in self._extra.in_window(mn_x, mn_y, mx_x, mx_y):
+                any_seg = True
+                clipped = _clip(seg[0], seg[1], seg[2], seg[3],
+                                mn_x, mn_y, mx_x, mx_y)
+                if clipped is None:
+                    continue
+                _rasterise(wall, nx, ny, mn_x, mn_y, cell, *clipped)
+        return wall, any_seg
+
     def _trace_window(self, px, py, half, simplify_cells, snap):
         mn_x, mn_y = px - half, py - half
         mx_x, mx_y = px + half, py + half
@@ -195,20 +336,12 @@ class RoomTracer:
         if nx * ny > MAX_GRID_CELLS:
             return TraceResult(status="too_big")
 
-        segs = self.index.in_window(mn_x, mn_y, mx_x, mx_y)
-        if not segs:
+        wall, any_seg = self._wall_raster(mn_x, mn_y, mx_x, mx_y, nx, ny)
+        if not any_seg:
             # No walls this close: the room is bigger than the window, not
             # unwalled. Widen rather than give up - a 40 x 25 m hall has
             # nothing within 4 m of its centre.
             return TraceResult(status="expand")
-
-        wall = bytearray(nx * ny)
-        for seg in segs:
-            clipped = _clip(seg[0], seg[1], seg[2], seg[3],
-                            mn_x, mn_y, mx_x, mx_y)
-            if clipped is None:
-                continue
-            _rasterise(wall, nx, ny, mn_x, mn_y, cell, *clipped)
 
         sx = int((px - mn_x) // cell)
         sy = int((py - mn_y) // cell)
@@ -242,21 +375,36 @@ class RoomTracer:
         filled = None
         touched_edge = False
         explored = set()
+        explored_mask = None
+        labels = None
+        masks = _np is not None and _has_scipy()
         for seed in seeds:
             # A seed inside a region already flooded from another seed
             # would only flood the same region again. On a leaking room
             # that repeated a multi-second fill up to nine times.
-            if seed in explored:
+            if seed in explored or (explored_mask is not None and explored_mask[seed]):
                 continue
-            got, edge, overflow = _flood(grid, nx, ny, seed, self.max_cells)
+            if masks:
+                # the fill as an array: a leaking window is only counted,
+                # never turned into a set of cells; the window's free cells
+                # are labelled once for all its seeds
+                if labels is None:
+                    labels = _label_free(grid, nx, ny)
+                got, count, edge, overflow = _flood_mask(grid, nx, ny, seed, self.max_cells, labels)
+            else:
+                got, edge, overflow = _flood(grid, nx, ny, seed, self.max_cells)
+                count = len(got)
             if overflow:
-                return TraceResult(status="leaked", cells=len(got))
+                return TraceResult(status="leaked", cells=count)
             if edge:
                 touched_edge = True
-                explored |= got
+                if masks:
+                    explored_mask = got if explored_mask is None else (explored_mask | got)
+                else:
+                    explored |= got
                 explored |= _local_region(grid, nx, ny, seed, sx, sy, 8)
                 continue
-            if got:
+            if count:
                 filled = got
                 break
         if filled is None:
@@ -267,7 +415,10 @@ class RoomTracer:
         if sealed:
             # Give back what the thickening took: grow the filled region by
             # the same amount, stopping at the walls as they were drawn.
-            filled = _grow_into(filled, wall, nx, ny, self.seal)
+            filled = (_grow_mask(filled, wall, nx, ny, self.seal) if masks
+                      else _grow_into(filled, wall, nx, ny, self.seal))
+        elif masks:
+            filled = set(_np.flatnonzero(filled).tolist())
 
         return self._contour(filled, nx, mn_x, mn_y, simplify_cells, snap,
                              half)
@@ -352,6 +503,24 @@ def _rasterise(wall, nx, ny, mn_x, mn_y, cell, sx, sy, ex, ey):
     y0 = int((sy - mn_y) // cell)
     x1 = int((ex - mn_x) // cell)
     y1 = int((ey - mn_y) // cell)
+    # A horizontal or vertical run - most walls - visits every cell from
+    # one end to the other and nothing else: set it as one slice, the
+    # same cells the step-by-step walk below sets.
+    if y0 == y1:
+        if 0 <= y0 < ny:
+            a, b = (x0, x1) if x0 <= x1 else (x1, x0)
+            a, b = max(a, 0), min(b, nx - 1)
+            if a <= b:
+                row = y0 * nx
+                wall[row + a:row + b + 1] = b"\x01" * (b - a + 1)
+        return
+    if x0 == x1:
+        if 0 <= x0 < nx:
+            a, b = (y0, y1) if y0 <= y1 else (y1, y0)
+            a, b = max(a, 0), min(b, ny - 1)
+            if a <= b:
+                wall[a * nx + x0:b * nx + x0 + 1:nx] = b"\x01" * (b - a + 1)
+        return
     dx = abs(x1 - x0)
     dy = -abs(y1 - y0)
     step_x = 1 if x0 < x1 else -1
@@ -442,6 +611,24 @@ def _grow_into(filled, wall, nx, ny, radius):
     """
     if radius <= 0 or not filled:
         return filled
+    try:
+        import numpy as np
+        from scipy import ndimage
+    except ImportError:
+        np = None
+    if np is not None:
+        # The same growth, a step at a time over the whole grid in C.
+        blocked = np.frombuffer(bytes(wall), dtype=np.uint8).reshape(ny, nx) != 0
+        cur = np.zeros(ny * nx, dtype=bool)
+        cur[np.fromiter(filled, dtype=np.int64, count=len(filled))] = True
+        cur = cur.reshape(ny, nx)
+        square = np.ones((3, 3), dtype=bool)
+        for _ in range(radius):
+            grown = ndimage.binary_dilation(cur, structure=square) & ~blocked
+            if not (grown & ~cur).any():
+                break
+            cur |= grown
+        return set(np.flatnonzero(cur).tolist())
     current = set(filled)
     frontier = set(filled)
     for _ in range(radius):
@@ -468,6 +655,103 @@ def _grow_into(filled, wall, nx, ny, radius):
 
 
 def _flood(wall, nx, ny, start, max_cells):
+    """Returns (filled_set, touched_window_edge, overflowed).
+
+    The free cells 4-connected to `start`, labelled in one pass by scipy
+    (C) rather than walked cell by cell in Python: on a 65 MB sheet the
+    walk was most of the boundary run. The plain walk below stays for a
+    machine without scipy."""
+    try:
+        import numpy as np
+        from scipy import ndimage
+    except ImportError:
+        return _flood_walk(wall, nx, ny, start, max_cells)
+    if wall[start]:
+        return set(), False, False
+    free = np.frombuffer(bytes(wall), dtype=np.uint8).reshape(ny, nx) == 0
+    labels, _n = ndimage.label(free)
+    sy, sx = divmod(start, nx)
+    mask = labels == labels[sy, sx]
+    count = int(mask.sum())
+    edge = bool(mask[0, :].any() or mask[-1, :].any()
+                or mask[:, 0].any() or mask[:, -1].any())
+    filled = set(np.flatnonzero(mask).tolist())
+    if count > max_cells:
+        return filled, False, True
+    if edge:
+        return filled, True, False
+    return filled, False, False
+
+
+_SCIPY = []
+
+
+def _has_scipy():
+    if not _SCIPY:
+        try:
+            from scipy import ndimage  # noqa: F401
+            _SCIPY.append(True)
+        except ImportError:
+            _SCIPY.append(False)
+    return _SCIPY[0]
+
+
+def _label_free(wall, nx, ny):
+    """The 4-connected components of the free cells (scipy's default
+    cross structure), as _flood labels them."""
+    from scipy import ndimage
+    free = _np.frombuffer(bytes(wall), dtype=_np.uint8).reshape(ny, nx) == 0
+    labels, _n = ndimage.label(free)
+    return labels
+
+
+def _flood_mask(wall, nx, ny, start, max_cells, labels=None):
+    """_flood with the region as a flat boolean array:
+    (mask, count, touched_window_edge, overflowed). The same cells, the
+    same tests in the same order; no set is built."""
+    if wall[start]:
+        return None, 0, False, False
+    if labels is None:
+        labels = _label_free(wall, nx, ny)
+    sy, sx = divmod(start, nx)
+    mask = labels == labels[sy, sx]
+    count = int(mask.sum())
+    edge = bool(mask[0, :].any() or mask[-1, :].any()
+                or mask[:, 0].any() or mask[:, -1].any())
+    flat = mask.reshape(-1)
+    if count > max_cells:
+        return flat, count, False, True
+    if edge:
+        return flat, count, True, False
+    return flat, count, False, False
+
+
+def _grow_mask(mask, wall, nx, ny, radius):
+    """_grow_into from a flat boolean mask; returns the same set."""
+    from scipy import ndimage
+    if radius <= 0 or not mask.any():
+        return set(_np.flatnonzero(mask).tolist())
+    full = mask.reshape(ny, nx)
+    # Growth reaches at most `radius` cells past the region: work on the
+    # box round it (one cell more), which gives the same cells as the
+    # whole window.
+    rows = _np.flatnonzero(full.any(axis=1))
+    cols = _np.flatnonzero(full.any(axis=0))
+    r0, r1 = max(0, rows[0] - radius - 1), min(ny, rows[-1] + radius + 2)
+    c0, c1 = max(0, cols[0] - radius - 1), min(nx, cols[-1] + radius + 2)
+    blocked = (_np.frombuffer(bytes(wall), dtype=_np.uint8).reshape(ny, nx) != 0)[r0:r1, c0:c1]
+    cur = full[r0:r1, c0:c1].copy()
+    square = _np.ones((3, 3), dtype=bool)
+    for _ in range(radius):
+        grown = ndimage.binary_dilation(cur, structure=square) & ~blocked
+        if not (grown & ~cur).any():
+            break
+        cur |= grown
+    ys, xs = _np.nonzero(cur)
+    return set(((ys + r0) * nx + (xs + c0)).tolist())
+
+
+def _flood_walk(wall, nx, ny, start, max_cells):
     """Returns (filled_set, touched_window_edge, overflowed)."""
     filled = set()
     stack = [start]

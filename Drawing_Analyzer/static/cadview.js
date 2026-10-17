@@ -169,6 +169,7 @@
         var view = null;           // {cx, cy, s}: centre (world mm) and px per mm
         var hovered = null, pulse = null;
         var hoverFn = null, clickFn = null, loader = null;
+        var viewFn = null;            // told the view after each frame (to follow another viewer)
         var frame = 0;
         // Until the user pans or zooms, the view follows the last fit: a
         // viewer set up inside a hidden tab is fitted to a 0-pixel canvas,
@@ -298,6 +299,8 @@
             if (showTexts) { paintTexts(); }
             paintPolys();
             paintMarks();
+            paintDraft();
+            if (viewFn) { viewFn({ cx: view.cx, cy: view.cy, s: view.s }); }
         }
 
         function paintTexts() {
@@ -451,6 +454,19 @@
             readout.classList.remove("hidden");
         }
 
+        // Editing modes (the Geometry tab): "select" clicks items, "trace"
+        // and "draw" click points on the drawing, "move" drags text marks.
+        // Panning by dragging empty drawing works in every mode.
+        var mode = "select";
+        var draft = null;               // {pts: [[x,y]...], cursor: [x,y]}
+        var dragMark = null;
+        var moveFn = null, dblFn = null, dragEndFn = null;
+
+        function worldAt(e) {
+            var r = canvas.getBoundingClientRect();
+            return toWorld(e.clientX - r.left, e.clientY - r.top);
+        }
+
         var drag = null, moved = false;
         canvas.addEventListener("wheel", function (e) {
             e.preventDefault();
@@ -458,12 +474,29 @@
             zoomBy(e.deltaY > 0 ? 1.18 : 0.85, e.clientX - r.left, e.clientY - r.top);
         }, { passive: false });
         canvas.addEventListener("pointerdown", function (e) {
+            if (mode === "move" && view) {
+                var r0 = canvas.getBoundingClientRect();
+                var it = hitTest(e.clientX - r0.left, e.clientY - r0.top);
+                if (it && it.kind === "mark" && it.draggable) {
+                    dragMark = { M: it, x: e.clientX, y: e.clientY, ox: it.x, oy: it.y };
+                    canvas.setPointerCapture(e.pointerId);
+                    canvas.style.cursor = "grabbing";
+                    return;
+                }
+            }
             drag = { x: e.clientX, y: e.clientY };
             moved = false;
             canvas.setPointerCapture(e.pointerId);
         });
         canvas.addEventListener("pointermove", function (e) {
             var r = canvas.getBoundingClientRect();
+            if (dragMark && view) {
+                dragMark.M.x = dragMark.ox + (e.clientX - dragMark.x) / view.s;
+                dragMark.M.y = dragMark.oy - (e.clientY - dragMark.y) / view.s;
+                draw();
+                return;
+            }
+            if (moveFn && view && !drag) { moveFn(worldAt(e)); }
             if (drag && view) {
                 var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
                 if (Math.abs(dx) + Math.abs(dy) > 2) { moved = true; autoFit = false; }
@@ -478,13 +511,23 @@
             var item = hitTest(e.clientX - r.left, e.clientY - r.top);
             if (item !== hovered) {
                 hovered = item;
-                canvas.style.cursor = item && item.click !== false ? "pointer" : "";
+                canvas.style.cursor = (mode === "draw" || mode === "trace") ? "crosshair" :
+                    (mode === "move" ? (item && item.draggable ? "grab" : "") :
+                     (item && item.click !== false ? "pointer" : ""));
                 showReadout(item);
                 if (hoverFn) { hoverFn(item); }
                 draw();
             }
         });
         function endDrag(e) {
+            if (dragMark) {
+                var dm = dragMark;
+                dragMark = null;
+                canvas.style.cursor = "";
+                if (dragEndFn) { dragEndFn(dm.M, dm.M.x - dm.ox, dm.M.y - dm.oy); }
+                draw();
+                return;
+            }
             if (!drag) { return; }
             var wasMoved = moved;
             drag = null;
@@ -493,7 +536,8 @@
                 wantDetail();
             } else if (e && e.type === "pointerup" && clickFn && view) {
                 var r = canvas.getBoundingClientRect();
-                clickFn(hitTest(e.clientX - r.left, e.clientY - r.top));
+                clickFn(mode === "draw" ? null : hitTest(e.clientX - r.left, e.clientY - r.top),
+                        worldAt(e), e);
             }
         }
         canvas.addEventListener("pointerup", endDrag);
@@ -506,7 +550,40 @@
                 draw();
             }
         });
-        canvas.addEventListener("dblclick", function () { fit(); });
+        canvas.addEventListener("dblclick", function (e) {
+            if (dblFn && view && dblFn(worldAt(e), e)) { return; }
+            fit();
+        });
+
+        function paintDraft() {
+            if (!draft || !view) { return; }
+            var pts = draft.pts.slice();
+            if (draft.cursor) { pts.push(draft.cursor); }
+            if (!pts.length) { return; }
+            ctx.beginPath();
+            pts.forEach(function (q, i) {
+                var p = toScreen(q[0], q[1]);
+                if (i) { ctx.lineTo(p[0], p[1]); } else { ctx.moveTo(p[0], p[1]); }
+            });
+            if (draft.pts.length >= 2) {
+                var p0 = toScreen(draft.pts[0][0], draft.pts[0][1]);
+                ctx.lineTo(p0[0], p0[1]);
+            }
+            ctx.setLineDash([6, 4]);
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = "#ffd43b";
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.fillStyle = "rgba(255,212,59,0.15)";
+            if (draft.pts.length >= 2) { ctx.fill(); }
+            draft.pts.forEach(function (q, i) {
+                var p = toScreen(q[0], q[1]);
+                ctx.beginPath();
+                ctx.arc(p[0], p[1], i === 0 ? 6 : 4, 0, Math.PI * 2);
+                ctx.fillStyle = i === 0 ? "#ffd43b" : "#fff";
+                ctx.fill();
+            });
+        }
 
         function prepare(list, kind) {
             return (list || []).map(function (it) {
@@ -587,6 +664,23 @@
             },
             onHover: function (fn) { hoverFn = fn; },
             onClick: function (fn) { clickFn = fn; },
+            onMove: function (fn) { moveFn = fn; },
+            onDblClick: function (fn) { dblFn = fn; },
+            onDragEnd: function (fn) { dragEndFn = fn; },
+            setMode: function (m) {
+                mode = m || "select";
+                canvas.style.cursor = (mode === "draw" || mode === "trace") ? "crosshair" : "";
+            },
+            setDraft: function (d) { draft = d; draw(); },
+            screenScale: function () { return view ? view.s : 1; },
+            onView: function (fn) { viewFn = fn; },
+            setView: function (v) {
+                if (!v || !W) { return; }
+                autoFit = false;
+                view = { cx: v.cx, cy: v.cy, s: v.s };
+                draw();
+                wantDetail();
+            },
             clear: function () {
                 base = []; detail = []; texts = []; polys = []; marks = [];
                 extent = null; home = null; view = null;

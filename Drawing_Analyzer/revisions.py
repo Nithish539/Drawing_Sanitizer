@@ -280,8 +280,9 @@ def _guess_floor_layer(msp, units, area_fn):
         if len(pts) < 3:
             continue
         layer = (e.dxf.layer or "0")
-        if layer.upper().endswith("_BOUNDARY") or layer.upper().endswith("_VOID"):
-            continue                    # those are rooms, not the outline
+        from . import layernames as LN
+        if LN.is_app_layer(layer):
+            continue                    # rooms, holes, walls - not the outline
         mm = units.mm_per_unit
         a = area_fn([(x * mm, y * mm) for x, y in pts])
         if a > best_area:

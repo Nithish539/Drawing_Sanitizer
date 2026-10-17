@@ -11,6 +11,17 @@
 (function () {
     "use strict";
 
+    // The title bar is sticky; its height (it wraps on narrow screens)
+    // tells the CSS where the rest of the sticky layout starts.
+    var topbar = document.querySelector(".topbar");
+    function topbarHeight() {
+        if (topbar) {
+            document.documentElement.style.setProperty("--topbar-h", topbar.offsetHeight + "px");
+        }
+    }
+    topbarHeight();
+    window.addEventListener("resize", topbarHeight);
+
     var wrap = document.querySelector("main.wrap");
     if (!wrap) { return; }
 
@@ -52,6 +63,11 @@
             var sep = document.createElement("span");
             sep.className = "stepnav-sep";
             nav.appendChild(sep);
+            // The setup screens: open any time, never part of the run order.
+            var tools = document.createElement("span");
+            tools.className = "stepnav-group";
+            tools.textContent = "Tools";
+            nav.appendChild(tools);
             dividerAdded = true;
         }
 
@@ -60,7 +76,8 @@
         b.className = "stepnav-item";
         b.innerHTML = '<span class="stepnav-no">' +
             (mark ? mark.innerHTML : i + 1) + "</span><span>" +
-            (title ? title.textContent : "Step " + (i + 1)) + "</span>";
+            (title ? title.textContent : "Step " + (i + 1)) + "</span>" +
+            '<span class="stepnav-badge" aria-live="polite"></span>';
         b.addEventListener("click", function () {
             if (b.disabled) { return; }
             show(i);
@@ -76,6 +93,34 @@
     });
 
     wrap.insertBefore(nav, wrap.firstChild);
+
+    /* Hide / show the menu: a small icon on the menu itself, and a slim tab
+       at the left edge to bring it back. Remembered for this browser tab. */
+    var hideBtn = document.createElement("button");
+    hideBtn.type = "button";
+    hideBtn.className = "stepnav-toggle";
+    hideBtn.title = "Hide menu";
+    hideBtn.setAttribute("aria-label", "Hide menu");
+    hideBtn.innerHTML = "&laquo;";
+    nav.insertBefore(hideBtn, nav.firstChild);
+    var showTab = document.createElement("button");
+    showTab.type = "button";
+    showTab.className = "menu-tab";
+    showTab.title = "Show menu";
+    showTab.setAttribute("aria-label", "Show menu");
+    showTab.innerHTML = "&raquo;";
+    document.body.appendChild(showTab);
+    function setMenu(hidden) {
+        document.body.classList.toggle("nav-hidden", hidden);
+        try { sessionStorage.setItem("da-nav-hidden", hidden ? "1" : ""); } catch (e) { /* none */ }
+        // Canvases and tables follow their new width.
+        window.dispatchEvent(new Event("resize"));
+    }
+    hideBtn.addEventListener("click", function () { setMenu(true); });
+    showTab.addEventListener("click", function () { setMenu(false); });
+    try {
+        if (sessionStorage.getItem("da-nav-hidden") === "1") { setMenu(true); }
+    } catch (e) { /* none */ }
 
     var current = -1;
 
@@ -102,8 +147,11 @@
         // effect of some other step: the layer inventory is read during the
         // upload, and stealing the view for it would drop the user in
         // Step 6 when they were on their way to Step 2.
+        // While Fast track runs, Steps 3-5 fill in behind Step 6: the user
+        // stays on the progress there.
         if (changedIndex !== undefined && isReady(sections[changedIndex])
-                && !sections[changedIndex].hasAttribute("data-quiet")) {
+                && !sections[changedIndex].hasAttribute("data-quiet")
+                && !(window.DA_navHold && window.DA_navHold())) {
             show(changedIndex);
             return;
         }
@@ -197,6 +245,33 @@
             if (firstReady >= 0) { pick(key, firstReady); }
         }
     }
+
+    /* The step whose number mark reads n (1-6). */
+    function indexOfStep(n) {
+        for (var k = 0; k < sections.length; k++) {
+            if (stepNumber(sections[k]) === n) { return k; }
+        }
+        return -1;
+    }
+    /* flow.js opens a step by its number ... */
+    window.DA_showStep = function (n) {
+        var k = indexOfStep(n);
+        if (k >= 0 && isReady(sections[k])) { show(k); return true; }
+        return false;
+    };
+    window.DA_currentStep = function () {
+        return current >= 0 ? stepNumber(sections[current]) : 0;
+    };
+    /* ... and marks it in the bar: "running" while Fast track works on it
+       in the background, "ready" when it has finished. */
+    window.DA_stepBadge = function (n, text, kind) {
+        var k = indexOfStep(n);
+        if (k < 0 || !buttons[k]) { return; }
+        var badge = buttons[k].querySelector(".stepnav-badge");
+        if (!badge) { return; }
+        badge.textContent = text || "";
+        badge.className = "stepnav-badge" + (kind ? " is-" + kind : "");
+    };
 
     /* preview.js calls this so "View boundaries" lands on the drawing
      * rather than quietly filling in a tab the user is not looking at. */

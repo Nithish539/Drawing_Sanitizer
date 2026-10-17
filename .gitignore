@@ -23,3 +23,9 @@ bin/
 # OS
 .DS_Store
 Thumbs.db
+
+# Code backups taken before each change, project snapshots, test caches
+_backup_*/
+*.zip
+zi12OBiH
+.pytest_cache/

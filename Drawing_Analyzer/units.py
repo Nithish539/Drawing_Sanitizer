@@ -53,9 +53,18 @@ INSUNITS = {
 DEFAULT_MM_PER_UNIT = 1.0
 DEFAULT_LABEL = "Millimetres (assumed)"
 
-# Plausible size band for the median closed polyline, in metres.
-MEDIAN_MIN_M, MEDIAN_MAX_M = 0.25, 12.0
-# ...and for the 95th percentile, which is a room or a wing.
+# Plausible size bands, in metres. Three looks at the closed polylines:
+#   * the largest one - a floor plate or a site boundary;
+#   * the median of the 200 largest - rooms, cores, wings;
+#   * the median of all of them - a weak signal, because a drawing full of
+#     tile or fixture detail (285 FD first floor: 900 polylines under 100
+#     mm) pulls it far below a room, and judged on that alone an inch
+#     drawing scored better than the millimetre header that was right.
+LARGEST_MIN_M, LARGEST_MAX_M = 6.0, 2000.0
+TOP_MEDIAN_MIN_M, TOP_MEDIAN_MAX_M = 0.3, 60.0
+MEDIAN_MIN_M, MEDIAN_MAX_M = 0.1, 15.0
+TOP_COUNT = 200
+# kept for callers that still read them
 P95_MIN_M, P95_MAX_M = 4.0, 300.0
 
 # Preference order on ties. Millimetres first: it is what almost every
@@ -139,28 +148,39 @@ def _percentile(sorted_vals, q):
 
 
 def span_stats(spans):
-    """Median and 95th percentile of the polyline spans, in drawing units."""
+    """Size statistics of the closed polylines, in drawing units: the
+    median of all, the median of the TOP_COUNT largest, the largest, and
+    the 95th percentile (reported only)."""
     vals = sorted(s for s in spans if s and s > 0)
     if not vals:
         return None
+    top = vals[-TOP_COUNT:]
     return {
         "count": len(vals),
         "median": _percentile(vals, 0.5),
+        "top_median": _percentile(top, 0.5),
         "p95": _percentile(vals, 0.95),
         "max": vals[-1],
     }
 
 
 def score_unit(mm_per_unit, stats):
-    """How many of the two size criteria this unit satisfies (0, 1 or 2)."""
+    """How many of the three size criteria this unit satisfies (0..3).
+
+    The largest polyline and the median of the large ones carry the
+    decision; the median of everything only breaks ties, so a drawing
+    dense with small detail cannot talk the reader out of a correct
+    header, and a title block parked a kilometre away (one outlier among
+    the top 200) cannot either."""
     if not stats:
         return 0
-    med_m = stats["median"] * mm_per_unit / 1000.0
-    p95_m = stats["p95"] * mm_per_unit / 1000.0
+    k = mm_per_unit / 1000.0
     score = 0
-    if MEDIAN_MIN_M <= med_m <= MEDIAN_MAX_M:
+    if LARGEST_MIN_M <= stats["max"] * k <= LARGEST_MAX_M:
         score += 1
-    if P95_MIN_M <= p95_m <= P95_MAX_M:
+    if TOP_MEDIAN_MIN_M <= stats["top_median"] * k <= TOP_MEDIAN_MAX_M:
+        score += 1
+    if MEDIAN_MIN_M <= stats["median"] * k <= MEDIAN_MAX_M:
         score += 1
     return score
 
@@ -184,9 +204,10 @@ def infer_units_from_spans(spans):
     label, mm = INSUNITS[best_code]
     u = units_from_code(best_code, source="geometry")
     u.label = label
-    u.note = ("Inferred from the drawing: median element {0:.2f} m, "
-              "95th percentile {1:.1f} m.".format(
-                  stats["median"] * mm / 1000.0, stats["p95"] * mm / 1000.0))
+    u.note = ("Inferred from the drawing: largest outline {0:.1f} m, "
+              "typical large element {1:.2f} m, median element {2:.2f} m."
+              .format(stats["max"] * mm / 1000.0, stats["top_median"] * mm / 1000.0,
+                      stats["median"] * mm / 1000.0))
     return u
 
 
@@ -233,7 +254,7 @@ def resolve_units(header_code, spans, override=None):
     # element of 0.20 m in its declared millimetres, just under the band,
     # so centimetres scored 2 against millimetres' 1 and won: every wall
     # was read ten times too thick, and most rooms lost their boundary.
-    if header_units and inferred and header_score <= 0 \
+    if header_units and inferred and header_score <= 1 \
             and inferred_score > header_score:
         inferred.note = (
             "The DXF header declares {0}, but at that scale this drawing "

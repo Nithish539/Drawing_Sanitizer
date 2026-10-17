@@ -540,7 +540,7 @@ body {
     grid-column: 1;
     grid-row: 1 / 99;
     position: sticky;
-    top: 16px;
+    top: calc(var(--topbar-h, 0px) + 16px);
     z-index: 20;
     display: flex;
     flex-direction: column;
@@ -2172,3 +2172,1091 @@ tr.cad-flash td {
 }
 
 #floorsTable tbody tr, #resultsTable tbody tr { cursor: default; }
+
+/* Step 2: an outline that surrounds other floor plates (sheet border). */
+.enclose-warn {
+    margin-top: 3px;
+    color: #c92a2a;
+    font-size: 11.5px;
+    font-weight: 600;
+}
+
+tr.row-encloses td {
+    background: #fff5f5;
+}
+
+/* --- Excel-style column filter & sort (tablefilter.js) ---------------------- */
+tr.tf-hidden { display: none; }
+
+.tf-btn {
+    margin-left: 6px;
+    padding: 0 5px;
+    min-width: 20px;
+    height: 20px;
+    border: 1px solid #c9d6e8;
+    border-radius: 5px;
+    background: #fff;
+    color: #516079;
+    font-size: 11px;
+    line-height: 18px;
+    cursor: pointer;
+    vertical-align: middle;
+}
+
+    .tf-btn:hover { background: #eef4ff; border-color: #8fb0e0; }
+    .tf-btn.on { background: #1f6f8b; border-color: #1f6f8b; color: #fff; }
+
+.tf-panel {
+    position: absolute;
+    z-index: 1000;
+    width: 290px;
+    max-width: calc(100vw - 16px);
+    padding: 8px;
+    background: #fff;
+    border: 1px solid #cdd8e8;
+    border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(16, 32, 64, 0.22);
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+    .tf-panel .tf-sort {
+        text-align: left;
+        padding: 6px 8px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: #1f3a5f;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+        .tf-panel .tf-sort:hover { background: #eef4ff; }
+
+    .tf-panel .tf-search {
+        padding: 6px 8px;
+        border: 1px solid #cdd8e8;
+        border-radius: 6px;
+        font-size: 13px;
+    }
+
+    .tf-panel .tf-all { padding: 2px 4px; }
+
+    .tf-panel .tf-list {
+        max-height: 260px;
+        overflow: auto;
+        border: 1px solid #e3e9f2;
+        border-radius: 6px;
+        padding: 4px;
+    }
+
+        .tf-panel .tf-list label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 4px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+            .tf-panel .tf-list label:hover { background: #f3f7fd; }
+            .tf-panel .tf-list label span { flex: 1; word-break: break-word; }
+            .tf-panel .tf-list label em { color: #8a97ab; font-style: normal; font-size: 11px; }
+
+    .tf-panel .tf-more { color: #8a97ab; font-size: 12px; padding: 4px; }
+
+    .tf-panel .tf-actions { display: flex; justify-content: flex-end; gap: 6px; }
+
+        .tf-panel .tf-actions button {
+            padding: 6px 12px;
+            border-radius: 6px;
+            border: 1px solid #cdd8e8;
+            background: #fff;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .tf-panel .tf-actions .tf-ok { background: #1f3a5f; border-color: #1f3a5f; color: #fff; }
+
+.tf-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 6px 0;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: #eef6ff;
+    border: 1px solid #cfe0f5;
+    color: #1f3a5f;
+    font-size: 12.5px;
+}
+
+    .tf-bar button {
+        padding: 4px 10px;
+        border-radius: 6px;
+        border: 1px solid #9db8dd;
+        background: #fff;
+        color: #1f3a5f;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+/* Keep a column name and its filter button on one line. */
+th:has(> .tf-btn) { white-space: nowrap; }
+
+/* --- Step 3 Geometry tab --------------------------------------------------- */
+.geo-group {
+    margin: 10px 0;
+    border: 1px solid #dfe6f0;
+    border-radius: 10px;
+    background: #fff;
+    overflow: hidden;
+}
+
+    .geo-group > summary {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        background: #f5f8fc;
+        cursor: pointer;
+        list-style: none;
+    }
+
+    .geo-group > summary::-webkit-details-marker { display: none; }
+    .geo-group > summary::before { content: "\25B8"; color: #6b7a90; }
+    .geo-group[open] > summary::before { content: "\25BE"; }
+    .geo-group .table-wrap { margin: 0; border-radius: 0; }
+
+.geo-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    background: var(--k);
+    display: inline-block;
+}
+
+.geo-tools {
+    margin-left: auto;
+    display: inline-flex;
+    gap: 14px;
+    align-items: center;
+    font-size: 12.5px;
+    color: #3b4b61;
+}
+
+    .geo-tools select { font-size: 12px; padding: 2px 4px; }
+
+.geo-table select { max-width: 320px; }
+tr.geo-off td { opacity: 0.5; }
+
+/* Geometry tab: drawing and list side by side, each scrolling on its own. */
+.geo-split {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+    gap: 14px;
+    height: calc(100vh - var(--topbar-h, 0px) - 60px);
+    min-height: 520px;
+    margin-top: 8px;
+}
+
+.geo-left, .geo-right {
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.geo-right .geo-group:first-child { margin-top: 0; }
+.geo-left .cad { margin: 0 0 14px; }
+.geo-left .cad-stage { height: calc(100vh - var(--topbar-h, 0px) - 170px); min-height: 420px; }
+.geo-left.multi .cad-stage { height: calc(72vh - 60px); min-height: 380px; }
+
+.geo-floor-title {
+    padding: 2px 4px 6px;
+    font-weight: 700;
+    color: #1f3a5f;
+    cursor: pointer;
+}
+
+.geo-floor-view.active .geo-floor-title { color: #0f8f9a; }
+.geo-floor-view.active .cad { box-shadow: 0 0 0 2px #22b8cf, 0 6px 18px rgba(16, 32, 64, 0.12); }
+
+@media (max-width: 1100px) {
+    .geo-split { grid-template-columns: 1fr; height: auto; }
+    .geo-left, .geo-right { overflow: visible; }
+}
+
+/* Hide menu: the step menu goes, the cards take the whole width. */
+body.nav-hidden .stepnav { display: none; }
+body.nav-hidden .wrap { grid-template-columns: minmax(0, 1fr); }
+body.nav-hidden .wrap > section.card { grid-column: 1; }
+
+
+/* The list beside the drawing is half width: keep its table compact so the
+   Label and Family pickers stay in view. */
+.geo-right .geo-table { font-size: 12px; }
+.geo-right .geo-table th, .geo-right .geo-table td { padding: 6px 6px; }
+.geo-right .geo-table td .muted.small { display: none; }
+.geo-right .geo-table select { max-width: 190px; font-size: 12px; padding: 3px 4px; }
+.geo-right .geo-group > summary { flex-wrap: wrap; }
+.geo-right .geo-tools { margin-left: 0; width: 100%; justify-content: flex-end; }
+.geo-split { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); }
+.geo-right .geo-table select.geo-label { max-width: 165px; }
+.geo-right .geo-table select.geo-fam { max-width: 130px; }
+.geo-right .geo-table th .tf-btn { margin-left: 3px; }
+
+/* --- Page height -------------------------------------------------------------
+   Only one step shows at a time, so the menu and every step card share one
+   grid row. The menu used to span rows 1-99, and the 20 px gap between 99
+   empty rows left about 2,000 px of blank page under every step. */
+.stepnav { grid-row: 1; }
+.wrap > section.card { grid-row: 1; }
+
+/* --- Menu hide / show -------------------------------------------------------- */
+.stepnav { position: sticky; }
+
+.stepnav-toggle {
+    align-self: flex-end;
+    width: 26px;
+    height: 26px;
+    margin: -4px -4px 2px 0;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: #fff;
+    color: #516079;
+    font-size: 16px;
+    line-height: 22px;
+    cursor: pointer;
+}
+
+    .stepnav-toggle:hover { background: #eef4ff; color: #1f3a5f; }
+
+.menu-tab {
+    position: fixed;
+    left: 0;
+    top: calc(var(--topbar-h, 0px) + 24px);
+    z-index: 60;
+    display: none;
+    width: 22px;
+    height: 56px;
+    border: 1px solid var(--border);
+    border-left: 0;
+    border-radius: 0 9px 9px 0;
+    background: #fff;
+    color: #1f3a5f;
+    font-size: 16px;
+    box-shadow: var(--shadow);
+    cursor: pointer;
+}
+
+    .menu-tab:hover { background: #eef4ff; width: 26px; }
+
+body.nav-hidden .menu-tab { display: block; }
+
+@media (max-width: 900px) {
+    .stepnav-toggle, .menu-tab { display: none !important; }
+    body.nav-hidden .stepnav { display: flex; }
+}
+
+/* --- Long tables: scroll inside their box, header row stays in view ---------
+   A 900-room list used to make the page 45,000 px tall. */
+.table-wrap {
+    max-height: 70vh;
+    overflow: auto;
+}
+
+    .table-wrap thead th {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+    }
+
+/* The Geometry list already scrolls as a whole. */
+.geo-right .table-wrap { max-height: none; }
+
+/* Step 4 By family: collapsible sections. */
+.fam-block {
+    margin-bottom: 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #fff;
+}
+
+.fam-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    background: #e6eef8;
+    cursor: pointer;
+    list-style: none;
+}
+
+    .fam-head::-webkit-details-marker { display: none; }
+    .fam-head::before { content: "\25B8"; color: #516079; margin-right: 6px; }
+    .fam-block[open] > .fam-head::before { content: "\25BE"; }
+    .fam-head > div:first-child { flex: 1; }
+
+/* Step 4 Quantities: one folding section per floor. */
+.qfloor > summary { list-style: none; cursor: pointer; }
+.qfloor > summary::-webkit-details-marker { display: none; }
+.qfloor > summary > div { position: relative; padding-left: 34px !important; }
+.qfloor > summary > div::before { content: "B8"; position: absolute; left: 14px; }
+.qfloor[open] > summary > div::before { content: "BE"; }
+
+/* File pickers (Compare, Family rules import...) in the site's button style
+   instead of the browser's grey default. */
+input[type="file"] {
+    font-size: 13px;
+    color: #516079;
+}
+
+    input[type="file"]::file-selector-button {
+        margin-right: 10px;
+        padding: 7px 14px;
+        border: 1px solid #c9d6e8;
+        border-radius: 8px;
+        background: #fff;
+        color: #1f3a5f;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    input[type="file"]::file-selector-button:hover { background: #eef4ff; border-color: #8fb0e0; }
+
+/* --- Geometry editor --------------------------------------------------------- */
+.geo-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    background: #f5f8fc;
+    border: 1px solid #dfe6f0;
+    border-radius: 10px;
+}
+
+.geo-toolbar button {
+    height: 30px;
+    padding: 0 10px;
+    border: 1px solid #c9d6e8;
+    background: #fff;
+    color: #1f3a5f;
+    font: 600 12.5px/1 "Segoe UI", Arial, sans-serif;
+    cursor: pointer;
+}
+
+    .geo-toolbar button:disabled { opacity: .45; cursor: default; }
+    .geo-toolbar button:hover:not(:disabled) { background: #eef4ff; }
+
+.geo-modes { display: inline-flex; }
+    .geo-modes button { border-radius: 0; margin-left: -1px; }
+    .geo-modes button:first-child { border-radius: 8px 0 0 8px; margin-left: 0; }
+    .geo-modes button:last-child { border-radius: 0 8px 8px 0; }
+    .geo-modes button.on { background: #1f3a5f; color: #fff; border-color: #1f3a5f; }
+
+.geo-acts { display: inline-flex; gap: 6px; }
+    .geo-acts button { border-radius: 8px; }
+
+.geo-hint { flex-basis: 100%; font-size: 12px; color: #516079; }
+
+.geo-summary {
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    border-radius: 10px;
+    background: #eef6ff;
+    border: 1px solid #cfe0f5;
+    font-size: 13px;
+    color: #1f3a5f;
+    line-height: 1.7;
+}
+
+.geo-chip {
+    display: inline-block;
+    padding: 0 8px;
+    margin: 0 2px;
+    border-radius: 999px;
+    border: 1px solid var(--k);
+    background: color-mix(in srgb, var(--k) 18%, #fff);
+    font-size: 12px;
+    line-height: 20px;
+}
+
+.geo-warn { color: #c92a2a; }
+
+.geo-props {
+    padding: 12px;
+    margin-bottom: 10px;
+    border-radius: 10px;
+    background: #fff;
+    border: 1px solid #dfe6f0;
+    font-size: 13px;
+}
+
+.geo-props-head { margin-bottom: 8px; color: #1f3a5f; }
+
+.geo-field {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 6px 0;
+    font-weight: 600;
+    color: #3b4b61;
+}
+
+    .geo-field select, .geo-field input[type=text] {
+        flex: 1;
+        padding: 6px 8px;
+        border: 1px solid #cdd8e8;
+        border-radius: 7px;
+        font-size: 13px;
+    }
+
+.geo-facts { margin: 6px 0; }
+.geo-texts { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+    .geo-texts > div { flex-basis: 100%; }
+
+.geo-textbtn {
+    padding: 4px 8px;
+    border: 1px solid #c9d6e8;
+    border-radius: 7px;
+    background: #f7faff;
+    color: #1f3a5f;
+    font-size: 12px;
+    cursor: pointer;
+    text-align: left;
+}
+
+    .geo-textbtn:hover { background: #e7f0ff; }
+
+.geo-props-acts { display: flex; gap: 6px; margin-top: 10px; }
+
+.geo-sec {
+    margin-bottom: 10px;
+    border: 1px solid #dfe6f0;
+    border-radius: 10px;
+    background: #fff;
+}
+
+    .geo-sec > summary { padding: 10px 12px; cursor: pointer; font-weight: 700; color: #1f3a5f; }
+    .geo-sec > div { padding: 0 10px 10px; }
+
+.geo-layers { font-size: 12px; }
+    .geo-layers select { font-size: 12px; max-width: 150px; }
+
+tr.geo-selrow td { background: #fff3bf !important; }
+.geo-keys { padding: 6px 2px; line-height: 1.7; }
+
+/* The title bar stays at the top while the page scrolls. layout.js keeps
+   --topbar-h equal to its height, so sticky parts below sit under it and
+   anything scrolled into view is not hidden behind it. */
+.topbar {
+    position: sticky;
+    top: 0;
+    z-index: 70;
+}
+html { scroll-padding-top: calc(var(--topbar-h, 0px) + 10px); }
+@media (max-width: 700px) {
+    .topbar { padding: 12px 16px; }
+    .topbar .subtitle { display: none; }
+}
+.geo-table .geo-preview {
+    white-space: nowrap;
+    padding: 3px 9px;
+    font-size: 12px;
+    line-height: 1.3;
+    min-height: 0;
+}
+.geo-table td.geo-acts-cell, .geo-table td:last-child { white-space: nowrap; }
+.geo-table .geo-del {
+    white-space: nowrap;
+    padding: 3px 9px;
+    font-size: 12px;
+    line-height: 1.3;
+    min-height: 0;
+    margin-left: 4px;
+    color: #c92a2a;
+    border-color: #f1c0c0;
+}
+.geo-table .geo-del:hover { background: #fff0f0; border-color: #e03131; }
+/* Delete asks once, in place. */
+.geo-ask {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    font-weight: 600;
+    color: #c92a2a;
+    white-space: nowrap;
+}
+.geo-ask .btn { padding: 3px 9px; font-size: 12px; line-height: 1.3; min-height: 0; }
+.geo-ask .geo-ask-yes { background: #e03131; border-color: #e03131; color: #fff; }
+.geo-ask .geo-ask-yes:hover { background: #c92a2a; }
+.geo-hint.geo-asking { color: inherit; }
+.geo-table .geo-rowfam { font-size: 12px; padding: 3px 4px; max-width: 150px; }
+
+/* ---- Step 7 geometry analysis (AI) and Step 8 comparison ---- */
+.gai-top { justify-content: flex-start; align-items: center; gap: 12px; margin: 0 0 8px; flex-wrap: wrap; }
+.gai-groups { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0 10px; }
+.gai-chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px 5px 8px;
+    border: 1px solid var(--border); border-left: 4px solid var(--k); border-radius: 8px;
+    background: #fff; font-size: 13px; cursor: pointer; user-select: none;
+}
+.gai-chip b { color: #1f3a5f; }
+.gai-chip input { margin: 0; }
+.gai-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--k); }
+.gai-note { margin-left: 4px; }
+.gai-split {
+    display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 14px;
+    height: calc(100vh - var(--topbar-h, 0px) - 60px); min-height: 520px;
+}
+.gai-left, .gai-right { min-height: 0; overflow-y: auto; padding-right: 4px; }
+.gai-left .cad { margin: 0; }
+.gai-left .cad-stage { height: calc(100vh - var(--topbar-h, 0px) - 130px); min-height: 420px; }
+@media (max-width: 1100px) {
+    .gai-split { grid-template-columns: 1fr; height: auto; }
+    .gai-left, .gai-right { overflow: visible; }
+}
+.gai-inspect {
+    border: 1px solid var(--border); border-radius: 12px; background: #fbfcfe;
+    padding: 12px 14px; margin-bottom: 10px; font-size: 13px;
+}
+.gai-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 15px; }
+.gai-conf {
+    margin-left: auto; font-weight: 800; color: #0f8f9a; background: #e6fcf5;
+    border-radius: 999px; padding: 2px 10px;
+}
+.gai-pipe { margin: 0; padding-left: 20px; }
+.gai-pipe > li { margin: 6px 0; }
+.gai-pipe > li > b:first-child { display: block; color: #1f3a5f; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+.gai-feat { border-collapse: collapse; font-size: 12px; margin-top: 2px; }
+.gai-feat td { padding: 1px 10px 1px 0; vertical-align: top; }
+.gai-feat td:first-child { color: #66758c; }
+.gai-ev { list-style: none; margin: 4px 0 0; padding: 0; }
+.gai-ev li { padding: 1px 0; }
+.gai-ev li.ok { color: #2b8a3e; }
+.gai-ev li.no { color: #a61e4d; }
+.gai-meta { font-size: 10px; color: #66758c; border: 1px solid #ced4da; border-radius: 4px; padding: 0 4px; }
+.gai-reason { margin-top: 4px; color: #862e9c; font-weight: 600; }
+.gai-right .gai-table { font-size: 12px; }
+.gai-right .gai-table th, .gai-right .gai-table td { padding: 5px 6px; }
+.gai-table tbody tr { cursor: pointer; }
+.gcm-summary { display: flex; flex-wrap: wrap; gap: 10px; margin: 6px 0 4px; }
+.gcm-card {
+    min-width: 120px; padding: 8px 12px; border: 1px solid var(--border); border-top: 4px solid var(--k, #1f3a5f);
+    border-radius: 10px; background: #fff; display: flex; flex-direction: column;
+}
+.gcm-card b { font-size: 20px; color: #1f3a5f; }
+.gcm-card span { font-size: 12px; color: #455; display: flex; flex-direction: column; }
+.gcm-cat {
+    display: inline-block; font-size: 11px; font-weight: 700; color: #fff; background: var(--k);
+    border-radius: 999px; padding: 1px 8px; white-space: nowrap;
+}
+.gcm-sides { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 6px 0; }
+.gcm-sides > div { border: 1px solid var(--border); border-radius: 8px; padding: 8px; background: #fff; }
+.gcm-sides h4, .gai-inspect h4 { margin: 0 0 4px; font-size: 12px; color: #66758c; text-transform: uppercase; }
+.gcm-cands { margin: 4px 0 8px; padding-left: 20px; }
+
+/* Geometry tab: Unknown shapes wait for the user's answer */
+.geo-unk-ask {
+    margin-top: 8px; padding: 8px 10px; border: 1px solid #f59f00; border-left: 4px solid #f59f00;
+    border-radius: 8px; background: #fff9db; font-size: 13px; color: #5c3c00;
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+}
+.geo-unk-ask .btn { padding: 3px 10px; font-size: 12px; min-height: 0; }
+.geo-unk-ask .geo-unk-on { background: #1f3a5f; color: #fff; border-color: #1f3a5f; }
+.geo-unk-ask.flash { animation: geoUnkFlash 1.2s ease 2; }
+@keyframes geoUnkFlash { 50% { box-shadow: 0 0 0 4px rgba(245, 159, 0, .45); } }
+.geo-unk-done { margin-top: 6px; }
+
+/* Step 7: the user's own category and name for a finding */
+.gai-review {
+    border: 1px solid #c5d8f0; background: #f1f7ff; border-radius: 10px;
+    padding: 8px 10px; margin: 4px 0 8px;
+}
+.gai-review-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0 2px; }
+.gai-review-row label { display: inline-flex; gap: 5px; align-items: center; font-size: 12px; color: #455; }
+.gai-review-row select, .gai-review-row input { font-size: 12px; padding: 3px 5px; max-width: 200px; }
+.gai-review-row .btn { padding: 3px 10px; font-size: 12px; min-height: 0; }
+.gai-conf.gai-you { color: #1f3a5f; background: #e7f0ff; }
+.gai-table select.gai-rowcat { font-size: 12px; padding: 2px 3px; max-width: 140px; }
+
+/* Step 6: text-based and geometry-based output side by side */
+.gcm-dual { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; margin: 8px 0 10px; }
+.gcm-pane { min-width: 0; }
+.gcm-pane-head { font-weight: 700; color: #1f3a5f; padding: 2px 4px 6px; display: flex; gap: 8px; align-items: baseline; }
+.gcm-pane .cad { margin: 0; }
+.gcm-pane .cad-stage { height: calc(100vh - var(--topbar-h, 0px) - 230px); min-height: 380px; }
+.gcm-reports { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.gcm-reports .table-wrap, #gcmTable .table-wrap { max-height: 60vh; }
+#gcmInspect { margin: 0 0 10px; }
+@media (max-width: 1100px) {
+    .gcm-dual, .gcm-reports { grid-template-columns: 1fr; }
+}
+
+/* Step 6: take the drawing from a generated output */
+.areas-source {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    padding: 10px 12px; margin: 0 0 12px; border: 1px solid var(--border); border-radius: 10px; background: #f6fafe;
+}
+.areas-source .status { flex-basis: 100%; margin: 0; }
+.gcm-famrow { margin: 0 0 8px; }
+
+/* Step 6: the Area Statement on the page (same layout as the workbook) */
+.ast-head { margin: 4px 0 8px; }
+.ast-tower { margin: 14px 0 6px; padding: 6px 10px; background: #1f3a5f; color: #fff; font-weight: 800; border-radius: 6px; }
+.ast-table { font-size: 12px; }
+.ast-table th { text-align: center; white-space: normal; vertical-align: middle; min-width: 76px; }
+.ast-table th.ast-group { background: #d9e2f1; color: #1f3a5f; }
+.ast-table th.ast-nogroup { background: transparent; border: 0; }
+.ast-table td.ast-num { text-align: right; font-variant-numeric: tabular-nums; }
+.ast-table td.ast-floor { font-weight: 600; white-space: nowrap; }
+.ast-table tr.ast-refuge td { color: #c92a2a; }
+.ast-table tr.ast-total td { font-weight: 800; background: #f2f5fa; color: #1f3a5f; }
+.ast-table td.ast-k-gross { background: #e7f5ff; }
+.ast-table td.ast-k-total_shafts { background: #fff4e6; }
+.ast-table td.ast-k-net_bua, .ast-table td.ast-k-plinth { background: #ebfbee; }
+.ast-table td.ast-k-sale_sqm, .ast-table td.ast-k-sale_sft { background: #f3f0ff; }
+.ast-table td.ast-k-eff_sa, .ast-table td.ast-k-eff_pa { background: #fff9db; }
+.ast-sft { margin: 4px 0 0; }
+.ast-summary { max-width: 720px; }
+.ast-rooms { margin-top: 12px; }
+
+/* Step 5: the final drawing, settled row by row */
+.gcm-final {
+    border: 1px solid #b2c9e8; border-left: 4px solid #1f3a5f; border-radius: 10px;
+    background: #f4f8fd; padding: 10px 12px; margin: 10px 0;
+}
+.gcm-final-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 6px; }
+.gcm-final .status { margin: 6px 0 0; }
+.gcm-edit select, .gcm-edit input { font-size: 12px; padding: 2px 4px; max-width: 150px; }
+.gcm-edit input { width: 140px; }
+.gcm-edit tr.gcm-decide td { background: #fff5f5; }
+.gcm-edit tr.gcm-decide td:first-child { box-shadow: inset 4px 0 0 #e03131; }
+
+/* Step 2: how a floor plate was found */
+.src-badge { display: inline-block; font-size: 11px; font-weight: 700; border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
+.src-badge.src-closed { background: #e7f5ff; color: #1864ab; }
+.src-badge.src-lines { background: #fff4e6; color: #d9480f; }
+
+/* Step 2: one row per floor, sorted by floor; copies of one floor sit
+   together, and once one is ticked the others are struck out */
+#floorsTable tr.row-floorgroup td:first-child { box-shadow: inset 3px 0 0 #74c0fc; }
+#floorsTable tr.row-samefloor td { border-top-color: transparent; }
+#floorsTable tr.row-struck td { color: #adb5bd; background: #f8f9fa; }
+#floorsTable tr.row-struck td:not(:first-child) { text-decoration: line-through; }
+#floorsTable tr.row-struck td:first-child { box-shadow: inset 3px 0 0 #dee2e6; }
+#floorsTable tr.row-struck .rowname { text-decoration: line-through; color: #adb5bd; background: #f1f3f5; }
+#floorsTable tr.row-struck .src-badge,
+#floorsTable tr.row-struck .title-src { opacity: .5; }
+#floorsTable .floor-taken { font-size: 11px; font-weight: 600; color: #868e96; text-decoration: none; display: inline-block; }
+#floorsTable .floor-alt { font-size: 11px; font-weight: 600; color: #1971c2; }
+#floorDupWarn { margin: 0 0 8px; }
+/* Step 3: which texts to show */
+.text-search { display: flex; gap: 10px; align-items: center; }
+.text-search .text-show { display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
+.text-search input[type=search] { flex: 1; }
+
+/* Step 2: the plan title read from the drawing, and its text type */
+#floorsTable .title-cell { max-width: 320px; font-size: 12px; line-height: 1.35; }
+#floorsTable .title-text { color: var(--text, inherit); }
+.title-src { display: inline-block; padding: 0 5px; border-radius: 3px; font-size: 10px;
+  font-weight: 600; letter-spacing: .02em; white-space: nowrap; vertical-align: 1px;
+  border: 1px solid currentColor; }
+.title-src-mtext { color: #1c7ed6; }
+.title-src-text { color: #2b8a3e; }
+.title-src-other { color: #868e96; }
+
+/* Family rules: floor usages, and which a family applies to */
+.usage-box { margin: 10px 0 14px; padding: 10px 12px; border: 1px solid var(--border, #dee2e6);
+  border-radius: 8px; background: var(--surface-2, #f8f9fa); }
+.usage-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
+.usage-head .muted { flex: 1 1 320px; }
+.usage-list { display: grid; gap: 6px; }
+.usage-row { display: grid; grid-template-columns: auto 160px 1fr auto; gap: 8px; align-items: center; }
+.usage-row input[type=text], .usage-row .usage-name, .usage-row .usage-kw {
+  padding: 4px 8px; border: 1px solid var(--border, #ced4da); border-radius: 6px; font: inherit; font-size: 13px; }
+.usage-default { font-size: 12px; white-space: nowrap; color: var(--muted, #868e96); }
+@media (max-width: 640px) { .usage-row { grid-template-columns: auto 1fr auto; } .usage-row .usage-kw { grid-column: 1 / -1; } }
+.rule-usages { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin-top: 6px; font-size: 12px; }
+.rule-usages-label { color: var(--muted, #868e96); font-weight: 600; }
+.usage-chip { display: inline-flex; gap: 3px; align-items: center; padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--border, #dee2e6); cursor: pointer; }
+.usage-chip:has(input:checked) { border-color: #1c7ed6; color: #1c7ed6; background: rgba(28,126,214,.08); }
+.usage-chip input { margin: 0; }
+#floorsTable .rowusage { font: inherit; font-size: 12px; padding: 2px 4px; max-width: 120px; }
+
+/* Back / Stop / Restart at the top of every step */
+.step-ctl { display: flex; align-items: center; gap: 8px; margin: -4px 0 12px; padding-bottom: 10px;
+  border-bottom: 1px dashed var(--border, #dee2e6); }
+.step-ctl .step-ctl-state { flex: 1; font-size: 12px; color: var(--muted, #868e96); }
+.step-ctl.is-running .step-ctl-state::before { content: ""; display: inline-block; width: 8px; height: 8px;
+  margin-right: 6px; border-radius: 50%; background: #1c7ed6; animation: stepctl-pulse 1s infinite ease-in-out; }
+.step-ctl .step-stop:not(:disabled) { color: #c92a2a; border-color: #ffa8a8; }
+@keyframes stepctl-pulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+
+/* Step 5: make a settled conflict the family's rule */
+.gcm-edit tr.gcm-prec td { background: #e7f5ff; border-top: 0; font-size: 12px; padding: 6px 10px; }
+.gcm-edit tr.gcm-prec .btn { margin-left: 6px; }
+.rule-prec { display: block; margin-top: 6px; font-size: 12px; color: var(--muted, #868e96); }
+.rule-prec select { font: inherit; font-size: 12px; padding: 1px 4px; }
+
+/* Step 5: edit the selected object beside the drawings */
+.gcm-editbox { margin: 10px 0; padding: 10px 12px; border: 1px solid #a5d8ff; border-radius: 8px; background: #f1f8ff;
+  display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.gcm-editbox h4 { flex-basis: 100%; margin: 0 0 2px; font-size: 13px; }
+.gcm-editbox label { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; }
+.gcm-editbox select, .gcm-editbox input { font: inherit; font-size: 12px; padding: 3px 6px; }
+.gcm-editbox input { width: 200px; }
+
+.gcm-editbox.is-pending { border-color: #ffc078; background: #fff9db; }
+.gcm-confirm-tag { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 999px; font-size: 10px;
+  font-weight: 700; color: #e67700; border: 1px solid #ffc078; background: #fff9db; }
+
+/* Room confidence (Step 6, Room areas) */
+.conf-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+.conf-title { font-weight: 600; font-size: 13px; margin-right: 4px; }
+.conf-filter { border: 1px solid #d5dde8; background: #fff; border-radius: 999px; padding: 4px 12px;
+  font-size: 12.5px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.conf-filter.active { border-color: #1f3a5f; background: #eef3fa; }
+.conf-hint { margin-left: 6px; }
+.conf-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.conf-pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; cursor: help; white-space: nowrap; }
+.conf-score { font-weight: 400; opacity: .8; }
+.conf-high { background: #e3f4ea; color: #1d6b3d; }
+.conf-medium { background: #fff4d6; color: #8a6100; }
+.conf-low { background: #fde6e1; color: #a2321c; }
+.conf-dot.conf-high { background: #2e9d5b; } .conf-dot.conf-medium { background: #e0a100; } .conf-dot.conf-low { background: #d1492c; }
+
+/* --- workflow: run mode, step badges, Step 6 final outputs ---------------- */
+.stepnav-group {
+    display: block;
+    padding: 2px 11px 4px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.stepnav-badge {
+    margin-left: auto;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 7px;
+    border-radius: 999px;
+}
+
+    .stepnav-badge:empty { display: none; }
+    .stepnav-badge.is-running { background: #e7effb; color: #1f5fbf; }
+    .stepnav-badge.is-ready { background: #e3f2e8; color: #1e6b3e; }
+    .stepnav-badge.is-failed { background: #fdecea; color: var(--danger); }
+
+.run-mode {
+    border: 2px solid #1f5fbf;
+    border-radius: 12px;
+    padding: 14px 16px 16px;
+    margin: 16px 0 12px;
+    background: var(--surface);
+}
+
+.run-mode-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+    .run-mode-head legend {
+        float: left;
+        padding: 0;
+        font-size: 16px;
+        font-weight: 700;
+        color: var(--text);
+    }
+
+.run-mode-remember {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 32px;
+    color: var(--muted);
+}
+
+.run-mode-options {
+    clear: both;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px;
+}
+
+.run-mode-opt {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 14px 16px;
+    border: 1px solid #c9d2dd;
+    border-radius: 10px;
+    background: var(--surface);
+    cursor: pointer;
+    transition: border-color .15s, box-shadow .15s;
+}
+
+    .run-mode-opt input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+    }
+
+    .run-mode-opt.on {
+        border: 2px solid #1f5fbf;
+        padding: 13px 15px;
+        box-shadow: 0 0 0 4px #dce8fa;
+    }
+
+    .run-mode-opt:focus-within {
+        outline: 2px solid #1f5fbf;
+        outline-offset: 2px;
+    }
+
+.run-mode-title {
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.run-mode-desc {
+    font-size: 13px;
+    color: #3d4a59;
+    line-height: 1.5;
+}
+
+.proceed-note {
+    font-weight: 400;
+    font-size: 12.5px;
+    opacity: .85;
+    margin-left: 4px;
+}
+
+.btn-go {
+    background: #1e6b3e;
+    color: #fff;
+    border-color: transparent;
+    font-weight: 600;
+}
+
+    .btn-go:hover:not(:disabled) {
+        background: #185a34;
+        color: #fff;
+    }
+
+.fo-headline {
+    margin: 0 0 4px;
+    font-size: 20px;
+}
+
+.fo-mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.fo-stale {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin: 10px 0;
+    padding: 10px 14px;
+    border: 1px solid #f0d29a;
+    background: #fff6e5;
+    border-radius: 10px;
+    color: #5e3a00;
+    font-size: 13px;
+}
+
+.fo-progress {
+    margin: 12px 0 18px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.fo-progress-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.fo-bar {
+    height: 8px;
+    border-radius: 999px;
+    background: #e4e9ef;
+    overflow: hidden;
+}
+
+.fo-bar-fill {
+    height: 100%;
+    width: 0;
+    background: #1f5fbf;
+    transition: width .4s ease;
+}
+
+.fo-stages {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 8px;
+}
+
+.fo-stage {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid #e1e6ec;
+    background: #f6f8fa;
+}
+
+    .fo-stage.is-done { background: #eef7f1; border-color: #bfdcc9; }
+    .fo-stage.is-running { background: #eef3fb; border-color: #9dbbea; }
+    .fo-stage.is-failed, .fo-stage.is-stopped { background: #fdf1ef; border-color: #f0b8b0; }
+
+.fo-stage-state {
+    font-size: 11px;
+    font-weight: 700;
+    color: #6b7786;
+}
+
+    .fo-stage.is-done .fo-stage-state { color: #1e6b3e; }
+    .fo-stage.is-running .fo-stage-state { color: #1f5fbf; }
+    .fo-stage.is-failed .fo-stage-state, .fo-stage.is-stopped .fo-stage-state { color: var(--danger); }
+
+.fo-stage-label {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.fo-stage-where {
+    font-size: 11px;
+    color: var(--muted);
+}
+
+.fo-dl-head, .fo-results-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    margin: 6px 0 10px;
+}
+
+    .fo-dl-head h3, .fo-results-head h3 {
+        margin: 0;
+        font-size: 16px;
+    }
+
+.fo-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 12px;
+    margin-bottom: 18px;
+}
+
+.fo-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+}
+
+    .fo-card.is-ready { border-color: #bfdcc9; }
+    .fo-card.fo-later { opacity: .65; }
+    .fo-card p { margin: 0; }
+
+.fo-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+    .fo-card-head h4 {
+        margin: 0;
+        font-size: 14.5px;
+    }
+
+.fo-chip {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+    background: #f1f4f7;
+    color: #5b6878;
+}
+
+    .fo-chip.is-ready { background: #e3f2e8; color: #1e6b3e; }
+    .fo-chip.is-running { background: #e7effb; color: #1f5fbf; }
+    .fo-chip.is-partial { background: #fff6e5; color: #8a5300; }
+    .fo-chip.is-failed { background: #fdecea; color: var(--danger); }
+
+.fo-files {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: auto;
+    padding-top: 4px;
+}
+
+    .fo-files a.is-off {
+        opacity: .45;
+        pointer-events: none !important;
+        cursor: not-allowed;
+        filter: grayscale(1);
+        box-shadow: none;
+    }
+
+.fo-results {
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+    margin-bottom: 16px;
+}
+
+.fo-recalc {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 16px;
+    background: var(--surface);
+    margin-top: 8px;
+}
+
+    .fo-recalc > summary {
+        cursor: pointer;
+        font-weight: 600;
+        min-height: 28px;
+    }
+
+    .fo-recalc[open] > summary {
+        margin-bottom: 8px;
+    }

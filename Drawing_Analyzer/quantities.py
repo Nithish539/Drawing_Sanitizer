@@ -270,10 +270,17 @@ _STATUS_MEANING = {
     "primary": "Got its own boundary as a primary label.",
     "secondary": "Got its own boundary as a secondary label.",
     "absorbed": "Sits inside another room's boundary; no separate boundary drawn.",
+    "size_mismatch": "Its label states a size, and every boundary found was more than ten times off it - NO BOUNDARY DRAWN rather than a wrong one.",
+    "geometry": "Inside a shape chosen in the Geometry tab; that shape is drawn with the family and label mapped there.",
+    "deleted": "Inside a shape deleted in the Geometry tab; no boundary is drawn there.",
+    "not_selected": "Not used: Generate drew only the shapes selected in the Geometry tab.",
+    "void": "Inside an X-marked void larger than the void threshold; the void is drawn and named VOID.",
     "merged": "Its boundary was merged into an overlapping one.",
     "no_walls": "No enclosing walls found within the search radius - NO BOUNDARY DRAWN.",
+    "no_evidence": "No wall, facade, room, primary door or column closes its room; a plain line or a guessed box would have - NO BOUNDARY DRAWN (rule boundary_on_evidence).",
     "pending": "Never processed - check whether it was deselected in Step 3.",
     "filtered": "Boundary found, but held back by the boundary-type filter.",
+    "in_wall": "Its boundary was almost all wall (the label stands in a wall) - NO BOUNDARY DRAWN (rule rooms_clear_of_walls).",
 }
 # 'filtered' is a deliberate choice by the user, not a defect.
 _STATUS_OK = {"x", "primary", "secondary", "absorbed", "merged", "filtered"}
@@ -288,9 +295,11 @@ def extraction_qa(stats: Dict, results: Dict) -> Dict:
     reason a run comes out short.
     """
     by_floor = (stats or {}).get("text_status_by_floor") or {}
+    notes_by_floor = (stats or {}).get("label_notes_by_floor") or {}
     rows = []
     totals = {}
     for floor_name, statuses in by_floor.items():
+        notes = notes_by_floor.get(floor_name) or {}
         text_by_sr = {int(r.get("sr_no")): r
                       for r in (results.get(floor_name) or [])
                       if r.get("sr_no") is not None}
@@ -306,7 +315,8 @@ def extraction_qa(stats: Dict, results: Dict) -> Dict:
                 "family": rec.get("family", ""),
                 "status": status,
                 "ok": status in _STATUS_OK,
-                "meaning": _STATUS_MEANING.get(status, status),
+                "meaning": _STATUS_MEANING.get(status, status) + (
+                    " - " + notes[str(sr_i)] if str(sr_i) in notes else ""),
             })
     problems = [r for r in rows if not r["ok"]]
     return {
@@ -419,6 +429,7 @@ def build_quantity_report(area_data: Dict, room_polys=None, cfg: Dict = None) ->
         "floor_label": area_data.get("floor_label"),
     }
     report.update(_sections(area_data, room_polys, cfg))
+    report["cutouts"] = list(area_data.get("cutouts") or [])
     floors = area_data.get("floors") or []
     if len(floors) > 1:
         report["floors"] = []

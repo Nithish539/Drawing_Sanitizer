@@ -519,8 +519,10 @@ def _matches(rule, item):
         return (c.get("label") or "").strip().lower() in \
             (item.get("label") or "").lower()
     if kind == "layer":
-        return (item.get("layer") or "").strip().upper() == \
-            (c.get("layer") or "").strip().upper()
+        # a rule written with the older name (TOILET_BOUNDARY) still
+        # matches the boundaries now drawn on AI_TOILET, and the other way
+        from .layernames import ai_layer
+        return ai_layer(item.get("layer") or "") == ai_layer(c.get("layer") or "")
     if kind == "area_below":
         return item.get("area_sqm", 0.0) < float(c.get("value", 0))
     if kind == "area_above":

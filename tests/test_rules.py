@@ -43,12 +43,16 @@ class CatalogueTests(unittest.TestCase):
 
     def test_shipped_defaults_are_all_on(self):
         """Defaults reproduce the behaviour from before rules could be
-        switched, with one deliberate exception: an opening with no door
-        now stays open, so a urinal bay or alcove belongs to its room."""
+        switched, with two deliberate exceptions: an opening with no door
+        now stays open, so a urinal bay or alcove belongs to its room; and
+        an X marking a strip of a shaft stays the strip, as a manual
+        take-off deducts it (nor are two such strips joined into one
+        shaft)."""
         got = rules.defaults()
-        self.assertFalse(got["close_wall_gaps"])
-        self.assertTrue(all(v for k, v in got.items()
-                            if k != "close_wall_gaps"))
+        off = ("close_wall_gaps", "x_grows_to_cell", "join_shaft_strips")
+        for k in off:
+            self.assertFalse(got[k], k)
+        self.assertTrue(all(v for k, v in got.items() if k not in off))
 
 
 class ResolveTests(unittest.TestCase):
@@ -57,26 +61,30 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual(rules.resolve(None), rules.defaults())
 
     def test_override_applies(self):
-        got = rules.resolve({"x_marks": False})
-        self.assertFalse(got["x_marks"])
+        got = rules.resolve({"x_wall_snap": False})
+        self.assertFalse(got["x_wall_snap"])
         self.assertTrue(got["trace_rooms"])
 
     def test_unknown_keys_are_ignored(self):
         """A selection saved by an older build names rules that have since
         been renamed; the run should proceed, not fail."""
-        got = rules.resolve({"no_such_rule": False, "x_marks": False})
+        got = rules.resolve({"no_such_rule": False, "x_wall_snap": False})
         self.assertNotIn("no_such_rule", got)
-        self.assertFalse(got["x_marks"])
+        self.assertFalse(got["x_wall_snap"])
         self.assertEqual(len(got), len(rules.defaults()))
+        # the X switches retired with the X sequence (2026-10-16): a saved
+        # selection naming them is read, and they do nothing
+        got = rules.resolve({"x_marks": False, "x_placement": False, "windows_in_walls": False})
+        self.assertEqual(got, rules.defaults())
 
     def test_values_are_coerced_to_bool(self):
-        got = rules.resolve({"x_marks": 0, "trace_rooms": "yes"})
-        self.assertIs(got["x_marks"], False)
+        got = rules.resolve({"x_wall_snap": 0, "trace_rooms": "yes"})
+        self.assertIs(got["x_wall_snap"], False)
         self.assertIs(got["trace_rooms"], True)
 
     def test_changed_from_default_reports_only_moves(self):
-        active = rules.resolve({"x_marks": False, "trace_rooms": True})
-        self.assertEqual(rules.changed_from_default(active), ["x_marks"])
+        active = rules.resolve({"x_wall_snap": False, "trace_rooms": True})
+        self.assertEqual(rules.changed_from_default(active), ["x_wall_snap"])
         self.assertEqual(rules.changed_from_default(rules.defaults()), [])
 
 

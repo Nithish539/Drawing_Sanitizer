@@ -1,5 +1,5 @@
 {
-  "_comment": "Family mapping rules. Each family has: name (display), layer (DXF layer suffix - the actual layer becomes <layer>_BOUNDARY), color (AutoCAD ACI color 1-255), and keywords. Keywords are matched WHOLE-WORD and case-insensitively, not as bare substrings: plain containment put 'FRESH AIR ATTENUATORS' into the TEN family and '8M EXPRESS WAY' into PRESS. Order matters - the first family with a match wins, so put the more specific families first, and inside a family put longer keywords before the short ones they contain. Anything matching nothing lands in 'Unknown' (UNKNOWN_BOUNDARY layer, color 7). Edit this file, restart the app, and re-run Section 3 / Section 4. Extending it also improves label choice, because a text the family rules recognise is treated as a room name rather than an equipment tag.",
+  "_comment": "Family mapping rules. Each family has: name (display), layer (DXF layer name - the actual layer is AI_<layer>, e.g. AI_SHAFT; the Void family's is AI_VOID_AREA, as AI_VOID holds the holes; drawings with the older <layer>_BOUNDARY names are still read), color (AutoCAD ACI color 1-255), and keywords. Keywords are matched WHOLE-WORD and case-insensitively, not as bare substrings: plain containment put 'FRESH AIR ATTENUATORS' into the TEN family and '8M EXPRESS WAY' into PRESS. Order matters - the first family with a match wins, so put the more specific families first, and inside a family put longer keywords before the short ones they contain. Anything matching nothing lands in 'Unknown' (AI_UNKNOWN layer, color 7). Edit this file, restart the app, and re-run Section 3 / Section 4. Extending it also improves label choice, because a text the family rules recognise is treated as a room name rather than an equipment tag.",
   "_aci_color_reference": {
     "1": "Red",
     "2": "Yellow",
@@ -17,12 +17,77 @@
     "150": "Light Magenta",
     "210": "Pink"
   },
+  "_usages_note": "Floor usage. Each floor in Step 2 has a usage (detected from its plan title by the keywords below, else default_usage, and changeable there). A family that lists 'usages' applies only on floors of those usages; a family with no 'usages' applies on every floor. Many to many: a family may list several usages, and a usage takes many families.",
+  "usages": [
+    {
+      "name": "Office",
+      "keywords": [
+        "OFFICE",
+        "WORKSPACE",
+        "IT FLOOR"
+      ]
+    },
+    {
+      "name": "Parking",
+      "keywords": [
+        "PARKING",
+        "CAR PARK",
+        "STILT",
+        "BASEMENT",
+        "BSMT"
+      ]
+    },
+    {
+      "name": "Retail",
+      "keywords": [
+        "RETAIL",
+        "SHOP",
+        "SHOPS",
+        "SHOWROOM",
+        "COMMERCIAL",
+        "MALL"
+      ]
+    },
+    {
+      "name": "Residential",
+      "keywords": [
+        "RESIDENTIAL",
+        "APARTMENT",
+        "FLAT",
+        "FLATS",
+        "RESIDENCE",
+        "VILLA"
+      ]
+    },
+    {
+      "name": "Hospitality",
+      "keywords": [
+        "HOTEL",
+        "HOSPITALITY",
+        "SERVICED APARTMENT"
+      ]
+    },
+    {
+      "name": "Amenity",
+      "keywords": [
+        "AMENITY",
+        "AMENITIES",
+        "CLUB HOUSE",
+        "CLUBHOUSE"
+      ]
+    }
+  ],
+  "default_usage": "Office",
   "families": [
     {
       "name": "Shaft",
       "layer": "SHAFT",
       "color": 1,
       "keywords": [
+        "PL SH",
+        "PL-SH",
+        "EL ELE",
+        "EL-ELE",
         "TOILET EXHAUST SHAFT",
         "ELECTRICAL SHAFT",
         "AHU PIPE SHAFT",
@@ -40,8 +105,29 @@
         "ELE SHAFT",
         "PHE SHAFT",
         "DG SHAFT",
-        "SHAFT"
-      ]
+        "SHAFT",
+        "SH",
+        "CUT-OUT",
+        "CUT OUT",
+        "CUTOUT",
+        "STR PRE",
+        "STR PRESS",
+        "STR PR",
+        "STAIR PRESS",
+        "STAIRCASE PRESS",
+        "STAIRCASE PRE",
+        "STAIR PREZ",
+        "STAIR PR",
+        "PREZ",
+        "PRESSURISATION SHAFT",
+        "LIFT PRESSURISATION",
+        "LIFT PRESSURIZATION",
+        "LIFT PRESS",
+        "LIFT PRES",
+        "LIFT PREZ",
+        "LIFT PRE"
+      ],
+      "precedence": "geometry"
     },
     {
       "name": "Toilet",
@@ -68,32 +154,85 @@
         "JAN",
         "TOI",
         "WC"
-      ]
+      ],
+      "precedence": "geometry"
+    },
+    {
+      "name": "Machine Room",
+      "layer": "MACHINEROOM",
+      "color": 32,
+      "keywords": [
+        "M.ROOM",
+        "M. ROOM",
+        "LIFT ELE.PANELS",
+        "LIFT MACHINE ROOM",
+        "MACHINE ROOM",
+        "LMR",
+        "MMR"
+      ],
+      "_note": "A lift machine room. The geometry engine files a space between lift wells here when none of the lifts has a door onto it. Precedence geometry (not geometry_always): a room the texts name (ELECTRICAL, AHU, STORE) keeps its name and family over the geometry's Machine Room.",
+      "precedence": "geometry"
+    },
+    {
+      "name": "Mechanical Room",
+      "layer": "MECHANICALROOM",
+      "color": 34,
+      "keywords": [
+        "MECHANICAL ROOM",
+        "MECH. ROOM",
+        "MECH ROOM"
+      ],
+      "_note": "A lift with no door opening on this floor (dxf_reader rule lift_without_door_mechanical, 2026-10-17): no gap in its walls, no door - not a lift that stops here (P285 11th floor: LIFT WELL BELOW). Drawn on AI_MECHANICALROOM; the area statement files it under MACHINE ROOM.",
+      "precedence": "geometry"
+    },
+    {
+      "name": "Service Lobby",
+      "layer": "SERVICELOBBY",
+      "color": 112,
+      "keywords": [
+        "SERVICE LOBBIES",
+        "SERVICE LOBBY",
+        "SMOKE LOBBY",
+        "FIRE TOWER",
+        "SERV LOBBY"
+      ],
+      "_note": "The lobby a staircase's door opens into. Found by the geometry engine too (the polygon on the other side of a staircase door); counted under SERVICE LOBBY in the area statement.",
+      "precedence": "geometry_always"
+    },
+    {
+      "name": "Lift Lobby",
+      "layer": "LIFTLOBBY",
+      "color": 150,
+      "keywords": [
+        "LIFT LOBBIES",
+        "LIFT LOBBY",
+        "LIFTLOBBY",
+        "LIFT LOBBY AREA"
+      ],
+      "_note": "The lobby in front of the lifts, drawn on AI_LIFTLOBBY - not the lift wells (Lift). Checked before Lift, so LIFT LOBBY never falls into Lift by its word LIFT.",
+      "precedence": "geometry_always"
     },
     {
       "name": "Lift",
       "layer": "LIFT",
       "color": 5,
       "keywords": [
-        "LIFT MACHINE ROOM",
-        "LIFT ELE.PANELS",
         "PASSENGER LIFT",
         "FIREMAN LIFT",
         "FREIGHT LIFT",
         "SERVICE LIFT",
         "GOODS LIFT",
-        "LIFT LOBBY",
         "ESCALATOR",
         "LIFT WELL",
         "CAR LIFT",
         "ELEVATOR",
         "LIFT PIT",
-        "LIFT PRE",
         "P LIFT",
         "P.LIFT",
         "LIFT",
         "PAX"
-      ]
+      ],
+      "precedence": "geometry_always"
     },
     {
       "name": "Staircase",
@@ -101,7 +240,6 @@
       "color": 3,
       "keywords": [
         "FIRE ESCAPE",
-        "STAIR PREZ",
         "FIRE EXIT",
         "STAIRCASE",
         "STAIRWELL",
@@ -110,33 +248,43 @@
         "STAIR",
         "STEPS",
         "ST-",
-        "STC"
-      ]
+        "STC",
+        "S/C",
+        "S.C",
+        "S.C.",
+        "SC-",
+        "STR-",
+        "STR"
+      ],
+      "precedence": "geometry"
     },
     {
       "name": "Fire / Life Safety",
       "layer": "FIRE",
-      "color": 1,
+      "color": 230,
       "keywords": [
         "FIRE COMMAND",
         "FIRE CONTROL",
         "FIRE REFUGE",
         "REFUGE AREA",
-        "SMOKE LOBBY",
-        "FIRE ALARM",
-        "FIRE TOWER",
-        "FIRE WATER",
         "FIRE PUMP",
-        "HOSE REEL",
-        "SPRINKLER",
-        "FIREMAN",
-        "HYDRANT",
-        "PA & FA",
-        "PA RACK",
-        "FACP",
-        "FHC",
-        "FHR"
-      ]
+        "REFUGE",
+        "FCC"
+      ],
+      "_note": "Real fire rooms only: a fire command or control room, a refuge area, a fire pump room. The fire-fighting tags on shafts and cabinets (FHC, FHR, HOSE REEL, HYDRANT, SPRINKLER, FIRE ALARM, PA & FA, FACP) are MEP / Services; an X-marked one is a shaft (rule x_opening_is_shaft). Colour 230, not the shafts' red (1)."
+    },
+    {
+      "name": "AHU Room",
+      "layer": "AHUROOM",
+      "color": 200,
+      "keywords": [
+        "AIR HANDLING UNIT",
+        "AIR HANDLING",
+        "AHU ROOM",
+        "AHU RM",
+        "AHU"
+      ],
+      "_note": "An air handling unit room, on its own layer AI_AHUROOM (Test_2) - it was on AI_MEP. After Shaft, so AHU PIPE SHAFT and AHU SHAFT stay shafts. The area statement files it under AHU ROOM by its name, as before."
     },
     {
       "name": "MEP / Services",
@@ -155,16 +303,23 @@
         "CONDENSER",
         "HVAC ROOM",
         "PUMP ROOM",
-        "AHU ROOM",
         "FAN ROOM",
+        "FIRE ALARM",
+        "HOSE REEL",
+        "SPRINKLER",
         "CHILLER",
+        "HYDRANT",
+        "PA & FA",
+        "PA RACK",
         "BOILER",
         "PRESS",
         "COMM",
         "FAPA",
-        "AHU",
+        "FACP",
         "FAP",
         "FCU",
+        "FHC",
+        "FHR",
         "MEP",
         "TEN",
         "VRF",
@@ -195,7 +350,6 @@
         "HT ROOM",
         "HT YARD",
         "LT ROOM",
-        "SERVER",
         "ELEC.",
         "PANEL",
         "DGCP",
@@ -207,7 +361,6 @@
       "layer": "CIRC",
       "color": 2,
       "keywords": [
-        "LIFT LOBBY",
         "PEDESTRIAN",
         "CONCOURSE",
         "CORRIDOR",
@@ -227,19 +380,24 @@
       ]
     },
     {
+      "name": "Void",
+      "layer": "VOID",
+      "color": 8,
+      "keywords": [
+        "VOID SPACE",
+        "VOID"
+      ]
+    },
+    {
       "name": "Balcony / Open",
       "layer": "BALCONY",
       "color": 30,
       "keywords": [
         "DOUBLE HEIGHT",
         "OPEN TO SKY",
-        "VOID SPACE",
         "BALCONY",
-        "CUT OUT",
         "TERRACE",
-        "CUTOUT",
         "DECK",
-        "VOID",
         "OTS"
       ]
     },
@@ -270,6 +428,7 @@
       "color": 140,
       "keywords": [
         "GREASE TRAP",
+        "FIRE WATER",
         "RAIN WATER",
         "WATER TANK",
         "RAINWATER",
@@ -313,6 +472,7 @@
       "layer": "ROOM",
       "color": 51,
       "keywords": [
+        "SERVER ROOM",
         "OPEN OFFICE",
         "WORKSTATION",
         "BOARD ROOM",
@@ -365,7 +525,17 @@
         "SLOPE",
         "RAMP",
         "ECS"
+      ],
+      "usages": [
+        "Parking"
       ]
+    },
+    {
+      "name": "Ignore",
+      "layer": "IGNORE",
+      "color": 8,
+      "keywords": [],
+      "_note": "Texts set to Ignore (in Step 3, or by a keyword here) get no boundary and are not used anywhere further. Last in the list, so a keyword here only catches texts no other family claims."
     }
   ]
 }

@@ -65,6 +65,35 @@ def _rows(ws, row, data: Sequence[Sequence], fill_when=None):
     return row
 
 
+def add_validation_sheet(path: str, validation: Dict):
+    """Append a Validation sheet to an existing workbook: the checks run on
+    the boundaries a Generate wrote (validate.py), then every issue."""
+    from openpyxl import load_workbook
+    if not validation or validation.get("error"):
+        return
+    wb = load_workbook(path)
+    ws = wb.create_sheet("Validation", 0)
+    row = _title(ws, 1, "Output validation")
+    row = _kv(ws, row, "Boundaries written", validation.get("boundaries", 0))
+    row = _kv(ws, row, "Voids", validation.get("voids", 0))
+    row = _kv(ws, row, "Unknown-family boundaries", validation.get("unknown_boundaries", 0))
+    row = _kv(ws, row, "Shafts with no name", validation.get("unnamed_shafts", 0))
+    row += 1
+    row = _headers(ws, row, ["Check", "Issues", "Result"], [42, 12, 12])
+    row = _rows(ws, row, [(c["check"], c["count"], "OK" if c["ok"] else "CHECK")
+                          for c in validation.get("checks", [])],
+                fill_when=lambda r: OK_FILL if r[2] == "OK" else WARN_FILL)
+    row += 1
+    row = _headers(ws, row, ["Kind", "Severity", "Floor", "Layer", "Label",
+                             "Area (sq.m)", "Detail"])
+    for i, w in enumerate([12, 10, 22, 22, 40, 12, 70], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    _rows(ws, row, [(i["kind"], i["severity"], i["floor"], i["layer"], i["label"],
+                     i["area_sqm"], i["detail"]) for i in validation.get("issues", [])],
+          fill_when=lambda r: WARN_FILL if r[1] == "error" else None)
+    wb.save(path)
+
+
 def _total(ws, row, label, col_letter, first, last, label_col=2, value_col=3):
     if last < first:
         return row
@@ -307,6 +336,14 @@ def write_quantities_excel(report: Dict, out_path: str, qa: Dict = None):
                        for x in qa["rows"]],
               fill_when=lambda row_: None)
 
+    if report.get("cutouts"):
+        wc = wb.create_sheet(_sheet_title("Cutouts", used))
+        r0 = _title(wc, 1, "Cut-outs in the walls (AI_CUTOUT) - not in any room's area")
+        r0 = _headers(wc, r0, ["Floor", "Name", "Area (sq.m)"], [24, 34, 14])
+        for c in report["cutouts"]:
+            for i, v in enumerate([c.get("floor"), c.get("name"), c.get("area_sqm")], start=1):
+                wc.cell(row=r0, column=i, value=v)
+            r0 += 1
     wb.save(out_path)
 
 
@@ -352,3 +389,192 @@ def write_comparison_excel(cmp_data: Dict, out_path: str):
                    for x in cmp_data["removed"]], fill_when=lambda _r: WARN_FILL)
 
     wb.save(out_path)
+
+
+WALL_LAYER = "AI_WALL"
+HANGING_WALL_LAYER = "AI_HANGING_WALL"
+# the per-class keys of a Generate saved before walls were one layer
+_OLD_WALL_KEYS = ("external", "core", "internal")
+
+
+def walls_summary(stats: Dict) -> Dict:
+    """{AI_WALL: {"count", "length_m", "area_sqm"}} from a Generate's stats
+    (walls_count / _length_m / _area_sqm, summed over floors). Stats saved
+    before walls were one layer (walls_external_* / _core_* / _internal_*)
+    are added up."""
+    def total(what):
+        v = stats.get("walls_%s" % what)
+        if v is None:
+            v = sum(float(stats.get("walls_%s_%s" % (k, what), 0) or 0) for k in _OLD_WALL_KEYS)
+        return float(v or 0)
+    return {WALL_LAYER: {"count": int(total("count")),
+                         "length_m": round(total("length_m"), 1),
+                         "area_sqm": round(total("area_sqm"), 2)}}
+
+
+def hanging_walls_summary(stats: Dict) -> Dict:
+    """The hanging walls of a Generate (walls drawn above floor level, an
+    object under them): not walls, their area counted in the rooms.
+    {"count", "area_sqm", "to_rooms_sqm", "items": [{floor, area_sqm,
+    evidence, pts}]}; {} when there are none."""
+    n = int(stats.get("hanging_walls_count") or 0)
+    if not n:
+        return {}
+    return {"count": n,
+            "area_sqm": round(float(stats.get("hanging_walls_area_sqm") or 0), 2),
+            "to_rooms_sqm": round(float(stats.get("hanging_walls_to_rooms_sqm") or 0), 2),
+            "items": stats.get("hanging_wall_items") or []}
+
+
+def wall_trace_summary(stats: Dict) -> Dict:
+    """The wall tracer's checks (walltrace.py), summed over floors."""
+    if not stats.get("wall_trace_floors"):
+        return {}
+    pct = stats.get("wall_trace_hatched_pct_by_floor") or {}
+    vals = [v for v in pct.values() if v is not None]
+    return {"floors": int(stats.get("wall_trace_floors") or 0),
+            "footprint_sqm": round(float(stats.get("wall_trace_footprint_sqm") or 0), 2),
+            "run_m": round(float(stats.get("wall_trace_run_m") or 0), 1),
+            "hatched_traced_pct": (round(sum(vals) / len(vals), 1) if vals else None),
+            "hatched_traced_pct_by_floor": pct,
+            "squeezed_kept": int(stats.get("wall_trace_strips_wall_squeezed") or 0),
+            "ledges": int(stats.get("wall_trace_strips_ledge") or 0),
+            "gaps": int(stats.get("wall_trace_strips_gap") or 0),
+            "review": int(stats.get("wall_trace_strips_review") or 0) + int(stats.get("wall_trace_review_blocks") or 0),
+            "shafts": int(stats.get("wall_trace_shafts") or 0),
+            "columns": int(stats.get("wall_trace_columns") or 0),
+            "review_items": stats.get("wall_review_items") or []}
+
+
+def add_walls_sheet(path: str, summary: Dict, trace: Dict = None, hanging: Dict = None):
+    """Append a Walls sheet to an existing workbook: the walls drawn on
+    AI_WALL - pieces, centre-line length and area. Walls are never rooms
+    and never in the areas. `hanging` (hanging_walls_summary): the walls
+    drawn above floor level, on AI_HANGING_WALL - not walls, their area
+    counted in the rooms."""
+    from openpyxl import load_workbook
+    if not summary:
+        return
+    wb = load_workbook(path)
+    ws = wb.create_sheet("Walls")
+    row = _title(ws, 1, "Walls drawn (never rooms, never counted in areas)")
+    row = _headers(ws, row, ["Layer", "Pieces", "Length (m)", "Area (sq.m)"], [24, 10, 14, 14])
+    data = [(k, v["count"], v["length_m"], v["area_sqm"]) for k, v in summary.items()]
+    row = _rows(ws, row, data)
+    if hanging:
+        row = _title(ws, (row or ws.max_row) + 2,
+                     "Hanging walls (an object drawn under them): not walls, counted in the rooms")
+        row = _headers(ws, row, ["Layer", "Pieces", "Into rooms (sq.m)", "Area (sq.m)"], [24, 10, 14, 14])
+        row = _rows(ws, row, [(HANGING_WALL_LAYER, hanging.get("count"), hanging.get("to_rooms_sqm"),
+                               hanging.get("area_sqm"))])
+        items = hanging.get("items") or []
+        if items:
+            row = _headers(ws, row, ["Floor", "Evidence", "From (x, y)", "To (x, y)"], [24, 10, 22, 22])
+            data3 = []
+            for it in items:
+                xs = [p[0] for p in it["pts"]]; ys = [p[1] for p in it["pts"]]
+                data3.append((it["floor"], it.get("evidence", ""), "%d, %d" % (min(xs), min(ys)),
+                              "%d, %d" % (max(xs), max(ys))))
+            row = _rows(ws, row, data3)
+    if trace:
+        row = _title(ws, (row or ws.max_row) + 2, "How the walls were decided (paired faces, confirmed by the wall hatch)")
+        row = _headers(ws, row, ["Check", "Value", "", ""], [24, 10, 14, 14])
+        checks = [("Floors traced", trace.get("floors")), ("Wall area (sq.m)", trace.get("footprint_sqm")),
+                  ("Wall run (m)", trace.get("run_m")),
+                  ("Wall hatch traced (%)", trace.get("hatched_traced_pct")),
+                  ("Unhatched strips between two walls, kept", trace.get("squeezed_kept")),
+                  ("Ledge walls behind WCs, left out", trace.get("ledges")),
+                  ("Empty gaps, left out", trace.get("gaps")),
+                  ("Hatched blocks taken as shafts", trace.get("shafts")),
+                  ("Hatched blocks taken as columns", trace.get("columns")),
+                  ("Pieces to review", trace.get("review"))]
+        row = _rows(ws, row, [(a, b if b is not None else "-", "", "") for a, b in checks])
+        items = trace.get("review_items") or []
+        if items:
+            row = _title(ws, (row or ws.max_row) + 2, "Wall pieces to review (mm)")
+            row = _headers(ws, row, ["Floor", "Kind", "From (x, y)", "To (x, y)"], [24, 10, 22, 22])
+            data2 = []
+            for it in items:
+                xs = [p[0] for p in it["pts"]]; ys = [p[1] for p in it["pts"]]
+                data2.append((it["floor"], it["kind"], "%d, %d" % (min(xs), min(ys)), "%d, %d" % (max(xs), max(ys))))
+            _rows(ws, row, data2)
+    wb.save(path)
+
+
+def add_wall_rules_sheet(path: str, stats: Dict):
+    """Append a "Wall rules" sheet: every line the geometry rules took out
+    of the walls (break mark, oblique unsupported, dead end) with its
+    coordinates, the rooms grown to their stated size, and how many
+    outlines were cleaned of slits and spikes."""
+    from openpyxl import load_workbook
+    exc = stats.get("wall_exclusions") or []
+    grown = stats.get("stated_grown") or []
+    wb = load_workbook(path)
+    ws = wb.create_sheet("Wall rules")
+    row = _title(ws, 1, "Lines that are not walls (by their geometry)")
+    counts = {}
+    for e in exc:
+        counts[e["rule"]] = counts.get(e["rule"], 0) + 1
+    for k in ("break mark", "oblique unsupported", "dead end"):
+        row = _kv(ws, row, k, counts.get(k, 0))
+    row = _kv(ws, row, "Outlines cleaned (slits, spikes)", int(stats.get("outlines_cleaned", 0) or 0))
+    row = _kv(ws, row, "Rooms grown to their stated size", len(grown))
+    row += 1
+    row = _headers(ws, row, ["Floor", "Rule", "x1", "y1", "x2", "y2", "Length (mm)"],
+                   [22, 22, 12, 12, 12, 12, 14])
+    data = []
+    for e in exc:
+        x1, y1, x2, y2 = e["line"][:4]
+        data.append((e["floor"], e["rule"], x1, y1, x2, y2, round(((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5)))
+    row = _rows(ws, row, data)
+    if grown:
+        row += 1
+        row = _headers(ws, row, ["Floor", "Room grown", "Stated", "Before (sq.m)", "After (sq.m)"])
+        _rows(ws, row, [(g["floor"], g["label"], g["stated"], g["before_sqm"], g["after_sqm"]) for g in grown])
+    wb.save(path)
+
+
+def add_window_checks_sheet(path: str, stats: Dict):
+    """Append a "Windows" sheet: how the X-marked openings in the walls
+    were sorted (windows, shaft strips, cut-outs), and every window whose
+    layer says shaft or cut-out while the drawing shows glazing."""
+    from openpyxl import load_workbook
+    from openpyxl.styles import Font
+    wb = load_workbook(path)
+    ws = wb.create_sheet("Windows")
+    row = _title(ws, 1, "X-marked openings in the walls")
+    for label, key in (("Windows", "windows"), ("  of them told by glazing lines", "windows_by_glazing"),
+                       ("Shaft strips (no glazing, shaft layer)", "shafts_from_window_test"),
+                       ("Cut-outs drawn on AI_CUTOUT", "cutouts_drawn"),
+                       ("Layer / drawing conflicts", "window_layer_conflicts")):
+        row = _kv(ws, row, label, int((stats or {}).get(key, 0) or 0))
+    row += 1
+    row = _headers(ws, row, ["Floor", "Outline (mm)", "Glazing lines", "Layers", "Check"], [18, 34, 14, 50, 44])
+    for r in (stats or {}).get("window_conflicts") or []:
+        vals = [r["floor"], "{0}-{2} x {1}-{3}".format(*r["bbox"]), r["glazing"], ", ".join(r["layers"]), r["note"]]
+        for i, v in enumerate(vals, start=1):
+            ws.cell(row=row, column=i, value=v).font = Font(bold=True, color="C00000")
+        row += 1
+    wb.save(path)
+
+
+def add_size_check_sheet(path: str, rows):
+    """Append a "Size check" sheet: every boundary whose label states a
+    size, its drawn area against the stated one; ratios outside the
+    boundary.size_check_range are flagged."""
+    from openpyxl import load_workbook
+    from openpyxl.styles import Font
+    wb = load_workbook(path)
+    ws = wb.create_sheet("Size check")
+    row = _title(ws, 1, "Boundaries with a stated size: drawn against stated")
+    row = _headers(ws, row, ["Floor", "Label", "Family", "Layer", "Stated (mm)", "Stated (sq.m)",
+                             "Drawn (sq.m)", "Drawn / stated", "Check"], [18, 34, 20, 18, 16, 14, 14, 14, 24])
+    for r in rows or []:
+        vals = [r["floor"], r["label"], r["family"], r["layer"], r["stated"], r["stated_sqm"],
+                r["drawn_sqm"], r["ratio"], r["flag"] or "OK"]
+        for i, v in enumerate(vals, start=1):
+            c = ws.cell(row=row, column=i, value=v)
+            if r["flag"]:
+                c.font = Font(bold=True, color="C00000")
+        row += 1
+    wb.save(path)

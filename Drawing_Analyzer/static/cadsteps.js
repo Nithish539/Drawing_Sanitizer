@@ -44,15 +44,23 @@
     /* ------------------------------------------------------ Step 2 --- */
     var s2 = { viewer: null, token: null, plates: [], seq: 0 };
 
+    /* Per plate, from its floor rows: ticked when any of its floors is,
+       named for the floors ticked (else its first row). */
     function plateRows() {
         var out = {};
         var tbody = document.querySelector("#floorsTable tbody");
         if (!tbody) { return out; }
         tbody.querySelectorAll(".rowsel").forEach(function (cb) {
             var idx = Number(cb.dataset.idx);
-            var name = tbody.querySelector('.rowname[data-idx="' + idx + '"]');
-            out[idx] = { checked: cb.checked, name: name ? name.value.trim() : "",
-                         tr: cb.closest("tr"), cb: cb };
+            var tr = cb.closest("tr");
+            var nm = tr.querySelector(".rowname");
+            var name = nm ? nm.value.trim() : "";
+            var o = out[idx] || (out[idx] = { checked: false, picked: [], first: name, tr: tr, cb: cb });
+            if (cb.checked) { o.checked = true; o.picked.push(name); }
+        });
+        Object.keys(out).forEach(function (k) {
+            var o = out[k];
+            o.name = o.picked.length ? o.picked.join(", ") : o.first;
         });
         return out;
     }
@@ -79,6 +87,8 @@
                     "<span>Index " + c.index + " &middot; " + fmt2(c.area_sqm) + " sq.m</span>" +
                     "<span>Layer " + esc(c.layer) + "</span>" +
                     (c.title ? "<span>Title: " + esc(c.title) + "</span>" : "") +
+                    (c.encloses ? "<span style='color:#ff8787'>&#9888; Encloses " + c.encloses +
+                        " other plates - a sheet border, not a floor</span>" : "") +
                     "<span class='cad-muted'>" + (r.checked ? "Ticked - click to untick" : "Click to tick") + "</span>"
             };
         });
@@ -149,11 +159,11 @@
     /* Clicking a plate in the drawing ticks or unticks its row. */
     function togglePlate(item) {
         if (!item || item.index == null) { return; }
+        if (!window.DA_togglePlate || !plateRows()[item.index]) { return; }
+        window.DA_togglePlate(item.index);
+        paintPlates();
         var r = plateRows()[item.index];
-        if (!r) { return; }
-        r.cb.checked = !r.cb.checked;
-        r.cb.dispatchEvent(new Event("change", { bubbles: true }));
-        flash(r.tr);
+        if (r) { flash(r.tr); }
     }
 
     /* ------------------------------------------------------ Step 3 --- */
@@ -207,6 +217,10 @@
         var st = window.DA_step3State();
         if (!st.floor) { return; }
         var shown = new Set(st.visible.map(function (r) { return r.sr_no; }));
+        // Rows a column filter hides are faded too.
+        document.querySelectorAll("#resultsTable tr.tf-hidden .textsel").forEach(function (cb) {
+            shown.delete(Number(cb.dataset.sr));
+        });
         var marks = st.rows.map(function (r) {
             var fam = st.family[r.sr_no] || r.family || "Unknown";
             var on = !st.unchecked.has(r.sr_no);
@@ -260,6 +274,9 @@
     (function wireStep3() {
         var tbody = document.querySelector("#resultsTable tbody");
         if (!tbody) { return; }
+        document.getElementById("resultsTable").addEventListener("tf:change", function () {
+            if (s3.viewer) { paintTexts(); }
+        });
         tbody.addEventListener("click", function (e) {
             if (e.target.closest("input, select, button, a")) { return; }
             var tr = e.target.closest("tr");

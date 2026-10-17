@@ -16,7 +16,7 @@ from .dxfio import load_document_ex
 from .quantities import build_quantity_report, extraction_qa
 
 
-def analyse_areas(dxf_path: str, floor_layer: str, unit_override=None) -> Dict:
+def analyse_areas(dxf_path: str, floor_layer: str, unit_override=None, floors=None) -> Dict:
     """Full step-4 analysis from one parse of the drawing.
 
     Returns a dict with the area result plus every derived report that
@@ -27,7 +27,7 @@ def analyse_areas(dxf_path: str, floor_layer: str, unit_override=None) -> Dict:
 
     area_data, room_polys = compute_room_areas(
         dxf_path, floor_layer, unit_override=unit_override,
-        return_polygons=True, loaded=loaded)
+        return_polygons=True, loaded=loaded, floors=floors)
 
     return {
         "areas": area_data,

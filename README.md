@@ -24,6 +24,19 @@ Then open http://127.0.0.1:5555.
 
 Also available: compare two revisions, the drawing layer inventory, family rules, and built-in rules.
 
+What the boundaries pass does with the drawing (2026-10-15):
+
+- A core or wing drawn at an angle is worked out in a copy of the drawing turned to the axes
+  (`rotation.py`, rule `rotated_cores`) and the results are turned back - rotated elements are drawn rotated.
+- A shaft is the compartment its X stands in, traced from the X on the walls, columns, doors and
+  partition lines (rule `shaft_compartment`); an X across two compartments gives one shaft each;
+  a trace that fails leaves the X as drawn, flagged on AI_REVIEW.
+- Doors are drawn as one line on the inner face of the wall of the room they serve.
+- An X between two stair flights is the stair's well (a hole), never a shaft.
+- A window never cuts a wall: the wall band runs on through it (`window_bridge_mm`).
+- The Area Statement workbook is a single formula-driven sheet (statement, quick lookup, area
+  register, by-layer table, working data).
+
 ## Tests
 
 ```powershell

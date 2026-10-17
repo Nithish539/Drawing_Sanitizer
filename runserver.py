@@ -42,5 +42,14 @@ if __name__ == "__main__":
     # which allows remote code execution, stays off unless FLASK_DEBUG
     # asks for it. Set SERVER_RELOAD=0 to disable.
     reload_on_edit = _flag("SERVER_RELOAD", True)
+    # The "stat" reloader, not watchdog. With watchdog installed Werkzeug
+    # picks it, and on Windows watchdog reports a file's last-access time
+    # changing as a modification: merely *reading* a .py/.pyc anywhere on
+    # sys.path restarted the server. Generate starts worker processes that
+    # import numpy, scipy and ezdxf, so the server restarted under its own
+    # run and the page got "Failed to fetch" a few minutes in. The stat
+    # reloader restarts only when a loaded source file's modification
+    # time changes.
     app.run(host=host, port=port, debug=debug, use_reloader=reload_on_edit,
+            reloader_type="stat",
             extra_files=[f for f in _CONFIG_FILES if path.exists(f)])

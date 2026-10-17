@@ -292,7 +292,7 @@ def extract(dxf_path, unit_override=None, loaded=None):
     texts, extent. Unresolved colour tokens at the top level fall back to
     white, as AutoCAD draws them. `loaded` is (doc, msp, units) when the
     caller has already parsed the file."""
-    doc, msp, units = loaded or load_document(dxf_path, unit_override)
+    doc, msp, units = loaded or load_document(dxf_path, unit_override, readonly=True)
     ex = _Extractor(doc, units)
     geo = _Geo()
     ex._collect(msp, geo, 0)
@@ -529,10 +529,11 @@ def _boundaries(doc, msp, units):
                              _polyline_points, _text_position, _text_value,
                              family_from_layer, floor_tag)
     from .geometry import shoelace_area_sqm
+    from . import layernames as LN
     shapes, texts = [], []
     for e in msp.query("LWPOLYLINE POLYLINE"):
         layer = e.dxf.layer or "0"
-        if not layer.upper().endswith("_BOUNDARY"):
+        if not (LN.is_room_layer(layer) or LN.is_floor_layer(layer)):
             continue
         try:
             pts = _polyline_points(e, units)
@@ -551,7 +552,7 @@ def _boundaries(doc, msp, units):
                        "floor": floor_tag(e)})
     for e in msp.query("TEXT MTEXT"):
         layer = (e.dxf.layer or "0").upper()
-        if not layer.endswith("_BOUNDARY"):
+        if not LN.is_room_layer(layer):
             continue
         value = _text_value(e)
         if value:

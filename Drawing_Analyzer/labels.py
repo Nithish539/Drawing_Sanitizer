@@ -67,18 +67,49 @@ _DEFAULT_TAG_PATTERNS = [
 _DEFAULT_IGNORE_PATTERNS = [
     r"^\d+(\.\d+)?\s*(MM|CM|M|MTR|SQM|SQ\.?M)?$",      # bare dimensions
     r"^[+\-]?\d+(\.\d+)?\s*(FFL|SSL|FL|LVL)\b",        # levels
+    r"^(LVL|LEVEL|EL|FFL|SFL|SSL)\.?\s*[:=]?\s*[+\-]?\s*\d+(\.\d+)?\s*(M|MM)?\s*(FFL|SFL|SSL|FL|LVL)?$",  # LVL + 555.35FFL (P25)
+    r"^GRIDS?\b",                                         # a grid note: GRID FOR CRITICAL ROOM (P14)
     r"^(UP|DN|DOWN|NTS|TYP|REF|DIA|THK|CLR|BELOW|ABOVE)\.?$",
     r"^R\d+$",                                          # radii / revisions
+    r"^W-?\s*\d{3,4}\s*T-?\s*\d{2,3}\s*R-?\s*\d{2,3}$",  # stair spec W-1500 T-300 R-150
     r"^\d+\s*[xX]\s*\d+$",                              # 2500 X 2500
     r"^\d+\s*MM\b.*\(\s*[WH]\s*\).*$",                 # 1100mm (W) X2400mm (H)
     r"^\d+\s*MM\s+SUNK$",
+    r"^\d+\s*MM\.?\s+(DROP|SUNK|SUNKEN|STEP|DEPRESSION)\b",   # 10MM DROP IN FINISH (BHUB): a floor finish note
+    r"^.*\bDROP\s+IN\s+(FINISH|FLOOR|FFL|LEVEL|LVL)\b",           # ... DROP IN FINISH - never a room's name
     r"^(NOTE|DATE|SIGN|SCALE|REV|DRAWN|CHECKED|APPROVED)\s*:?$",
     r"^\d{1,2}-\d{1,2}-\d{2,4}$",                       # revision dates
     r"^(TOWER|PHASE|BLOCK)[-\s]?\d+$",
+    r"^(LOW|LOWER|MID|MIDDLE|HIGH|UPPER)\s*ZONE\s*(\(?[A-Z0-9]{1,2}\)?)?$",   # lift group tag inside a lift (XA)
 ]
 
 
 _WORD_RE_CACHE = {}
+_MATCH_FORM_CACHE = {}
+
+
+def match_form(text) -> str:
+    """A label as keywords are matched against it.
+
+    Drawings write one name many ways, and the keyword missed each:
+      * "FIRE \\nTOWER" - MTEXT lines, or double spaces, between words;
+      * "ELE. ROOM", "P.C.TOI" - abbreviation dots;
+      * "SHAFT1380x1250" - the size run into the name.
+    Line breaks and runs of spaces become one space, a dot after a letter
+    becomes a space, and a word of two or more letters is parted from the
+    number run into it. Keywords get the same treatment, so "P.LIFT" and
+    "TOI.EX.SHAFT" still match themselves.
+    """
+    t = _MATCH_FORM_CACHE.get(text)
+    if t is None:
+        t = str(text or "").upper()
+        t = re.sub(r"(?<=[A-Z])\.", " ", t)
+        t = re.sub(r"(?<=[A-Z]{2})(?=\d)", " ", t)
+        t = " ".join(t.split())
+        if len(_MATCH_FORM_CACHE) > 200000:
+            _MATCH_FORM_CACHE.clear()
+        _MATCH_FORM_CACHE[text] = t
+    return t
 
 
 def keyword_matches(keyword, text_upper) -> bool:
@@ -90,11 +121,28 @@ def keyword_matches(keyword, text_upper) -> bool:
     PRESS because of "exPRESSway". Both went to the wrong family.
     Anchoring on word boundaries fixes it while leaving multi-word
     keywords such as "LIFT WELL" and punctuated ones such as "P.LIFT"
-    working.
+    working. Both sides are compared in match_form, so "FIRE \\nTOWER"
+    is FIRE TOWER and "ELE. ROOM" is ELE ROOM.
     """
-    kw = (keyword or "").strip().upper()
+    rx = keyword_regex(keyword)
+    return bool(rx and rx.search(match_form(text_upper)))
+
+
+_KW_RX_CACHE = {}
+
+
+def keyword_regex(keyword):
+    """The compiled whole-word pattern for a keyword, or None for a blank
+    one. Search it against match_form(text): a caller testing one text
+    against many keywords cleans the text once (keyword_matches does it
+    per call)."""
+    got = _KW_RX_CACHE.get(keyword)
+    if got is not None or keyword in _KW_RX_CACHE:
+        return got
+    kw = match_form((keyword or "").strip())
     if not kw:
-        return False
+        _KW_RX_CACHE[keyword] = None
+        return None
     rx = _WORD_RE_CACHE.get(kw)
     if rx is None:
         esc = re.escape(kw)
@@ -106,7 +154,8 @@ def keyword_matches(keyword, text_upper) -> bool:
         right = r"S?\b" if kw[-1].isalnum() else ""
         rx = re.compile(left + esc + right)
         _WORD_RE_CACHE[kw] = rx
-    return bool(rx.search(text_upper))
+    _KW_RX_CACHE[keyword] = rx
+    return rx
 
 
 class LabelRules:
@@ -161,10 +210,92 @@ class LabelRules:
         t = (text or "").strip().upper()
         if not t:
             return None
+        form = match_form(t)
         for kw in self.keywords:
-            if keyword_matches(kw, t):
+            rx = keyword_regex(kw)
+            if rx is not None and rx.search(form):
                 return kw
         return None
+
+
+# A size written under a name: "2700x1000", "1500 X 950 MM", "900X1100".
+# Metres too, a unit on either number: "2.6M X 2.9M", "3.3MX7.4M" (XA tower).
+_SIZE_RE = re.compile(
+    r"(?<!\d)(?<!\d\.)(\d{1,6}(?:\.\d+)?)\s*(MM|CM|M(?![A-Z]{2}))?\s*[xX\u00d7*]\s*(\d{1,6}(?:\.\d+)?)"
+    r"(?:\s*(MM|M|CM)\b)?")
+# A parenthesised note: "(1000 X 300 & 300 X 900 MM SLAB CUT-OUT)".
+_PAREN_RE = re.compile(r"\([^)]*\)?")
+# Words that make a text a note or a cross-reference, not a name.
+_NOTE_WORDS_RE = re.compile(
+    r"\b(REFER|REF|DRG|DWG|DETAILS?|NOTES?|SEE|FOR|SHOWN|TOWARDS|PROVIDED|"
+    r"AS PER|RAISING|TYP|TYPICAL|SLEEVES?|CEILING|BOTT|BOTTOM|NOS|"
+    r"CONDUITS?|RISERS?|FROM|TO BE|VENDOR|OPENINGS? TO|FLOOR LEVEL)\b")
+# A quantity: "4Nos 19mm CONDUIT RISERS FROM B-1 TO TERRACE" is a services
+# note, never the name of a space - though it says TERRACE.
+_QUANTITY_RE = re.compile(r"^\d+\s*NOS\b", re.IGNORECASE)
+_DETAIL_RE = re.compile(r"\bDETAILS?\b|\bREFER\b|\bSEE DRG\b")
+
+
+def name_part(text) -> str:
+    """The name in a label, without its size line or bracketed note.
+
+    "TR-SH-02 1200x1200 (1000 X 300 & 300 X 900 MM SLAB CUT-OUT)" names
+    TR-SH-02; its sizes are not part of the name and must not make it
+    read as a sentence.
+    """
+    t = _PAREN_RE.sub(" ", str(text or ""))
+    t = _SIZE_RE.sub(" ", t)
+    t = re.sub(r"\b(MM|SQ\.?M|SQM)\b", " ", t, flags=re.I)
+    lines = [" ".join(ln.split()) for ln in t.replace("\r", "").split("\n")]
+    return "\n".join(ln for ln in lines if ln)
+
+
+def declared_size(text):
+    """The size a label states for its space, as (a_mm, b_mm), or None.
+
+    Only the first size outside brackets counts: in "TR-SH-02 1200x1200
+    (1000 X 300 ...)" the shaft is 1200 x 1200 and the bracket describes
+    the slab cut-out inside it. Sizes given in metres are converted.
+    """
+    t = _PAREN_RE.sub(" ", str(text or ""))
+    m = None
+    for m_ in _SIZE_RE.finditer(t):
+        g1, g3 = m_.group(1), m_.group(3)
+        # "2 X 3" with no unit and no decimal is a count, not a size
+        if len(g1.split(".")[0]) < 2 and len(g3.split(".")[0]) < 2 and "." not in g1 + g3 \
+                and not (m_.group(2) or m_.group(4)):
+            continue
+        m = m_
+        break
+    if not m:
+        return None
+    a, b = float(m.group(1)), float(m.group(3))
+    unit = (m.group(4) or m.group(2) or "").upper()
+    if unit == "M" or (not unit and a < 100 and b < 100):
+        a, b = a * 1000.0, b * 1000.0
+    elif unit == "CM":
+        a, b = a * 10.0, b * 10.0
+    if a < 100 or b < 100 or a > 200000 or b > 200000:
+        return None
+    return a, b
+
+
+# An area written under a name: "REFUGE AREA / 151.05 SQ. MTR.",
+# "OFFICE SPACE / 843.61 SQ.MTS", "12.5 SQM", "1200 SQ.FT".
+_AREA_RE = re.compile(
+    r"(?<![\d.])(\d{1,6}(?:\.\d+)?)\s*(?:(SQ\.?\s*(?:FT|FEET)\.?)|"
+    r"SQ\.?\s*M(?:TRS?|ETRES?|ETERS?|TS)?\.?|SQM|M2|M\u00b2)(?![A-Z])", re.I)
+
+
+def declared_area(text):
+    """The floor area a label states for its space, in sq.m, or None."""
+    m = _AREA_RE.search(_PAREN_RE.sub(" ", str(text or "")))
+    if not m:
+        return None
+    v = float(m.group(1))
+    if m.group(2):
+        v *= 0.09290304
+    return v if 0.5 <= v <= 100000 else None
 
 
 def label_tier(text, rules: LabelRules) -> int:
@@ -182,8 +313,22 @@ def label_tier(text, rules: LabelRules) -> int:
     # drawing notes as a room name - and it then took a boundary that the
     # real stairs merged into, which is how four staircases and two lifts
     # disappeared off a plan. Room names are short; sentences are notes.
-    if len(t) > rules.max_name_chars:
+    # The name is measured without its size line: "LOBBY PRESSURE SHAFT
+    # 1500 X 950 MM" is a name, and dropping it as a note left the shaft
+    # unnamed. A name spread over short lines ("TOWER-01 / ZONE-01 / LIFT
+    # LOBBY-01") is still a name; a note gives itself away by its words.
+    if _QUANTITY_RE.match(t):
         return TIER_LONG
+    # a pointer to a detail drawing ("TOILET DETAILS", "STAIR DETAIL-2") is
+    # not the room it names (H10 Tower 2: TOILET DETAILS traced 130 sq.m)
+    if _DETAIL_RE.search(t.upper()):
+        return TIER_LONG
+    name = name_part(t) or t
+    if len(name.replace("\n", " ")) > rules.max_name_chars:
+        lines = name.split("\n")
+        if (len(lines) > 4 or _NOTE_WORDS_RE.search(name.upper()) or _NOTE_WORDS_RE.search(t.upper())
+                or any(len(ln) > rules.max_name_chars for ln in lines)):
+            return TIER_LONG
     if rules.family_keyword(t):
         return TIER_FAMILY
     if rules.is_tag(t):

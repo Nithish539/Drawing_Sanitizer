@@ -52,7 +52,7 @@ DEFAULTS = {
         "max_segments_per_arc": 64,
     },
     "annotation": {
-        "layer": "ROOM_BOUNDARY",
+        "layer": "AI_FLOOR",
         "color": 2,
         "text_height_mm": 150.0,
         "block_recursion_depth": 3,

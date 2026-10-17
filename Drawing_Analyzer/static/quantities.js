@@ -162,12 +162,50 @@
         chips.push(chip("Labels with a problem", qa.problem_count,
                         qa.problem_count ? "warn" : "ok"));
         Object.keys(totals).sort().forEach(function (k) {
-            chips.push(chip(k, totals[k], k === "no_walls" ? "warn" : ""));
+            chips.push(chip(k, totals[k], (k === "no_walls" || k === "no_evidence") ? "warn" : ""));
         });
+        // How far the boundaries can be trusted (confidence.py)
+        if (st.confidence_high || st.confidence_medium || st.confidence_low) {
+            chips.push(chip("confidence High", st.confidence_high || 0, "ok"));
+            chips.push(chip("confidence Medium", st.confidence_medium || 0, ""));
+            chips.push(chip("confidence Low - check these", st.confidence_low || 0,
+                            st.confidence_low ? "warn" : "ok"));
+        }
+        // Walls measured from paired faces, confirmed by the hatch (walltrace.py)
+        var wt = qa.wall_trace || null;
+        if (wt && wt.floors) {
+            chips.push(chip("wall area (sq.m)", wt.footprint_sqm, "ok"));
+            chips.push(chip("wall run (m)", wt.run_m, "ok"));
+            if (wt.hatched_traced_pct != null) {
+                chips.push(chip("of the wall hatch traced (%)", wt.hatched_traced_pct,
+                                wt.hatched_traced_pct >= 95 ? "ok" : "warn"));
+            }
+            if (wt.ledges) chips.push(chip("ledge walls left out", wt.ledges, ""));
+            if (wt.gaps) chips.push(chip("empty gaps left out", wt.gaps, ""));
+            if (wt.review) chips.push(chip("wall pieces to review", wt.review, "warn"));
+        }
+        // The element identification engine: every opening and core space
+        // scored; Low / Unresolved / disputed ones are marked on AI_REVIEW
+        var el = data.elements || null;
+        if (el && el.elements != null) {
+            chips.push(chip("elements scored", el.elements, "ok"));
+            chips.push(chip("auto-classified (50+)", el.auto || 0, "ok"));
+            chips.push(chip("to review (20-49)", el.review || 0, el.review ? "warn" : "ok"));
+            chips.push(chip("unresolved (under 20)", el.unresolved || 0, el.unresolved ? "warn" : "ok"));
+            chips.push(chip("classified otherwise than drawn", el.disputed || 0, el.disputed ? "warn" : "ok"));
+        }
         $("qaSummary").innerHTML = chips.join("");
         if (data.qa_download) {
             $("qaDlXlsx").href = data.qa_download.xlsx || "#";
             $("qaDlJson").href = data.qa_download.json || "#";
+        }
+        var eX = $("elDlXlsx"), eJ = $("elDlJson");
+        if (eX && eJ) {
+            var on = !!data.elements_download;
+            eX.href = on ? data.elements_download.xlsx : "#";
+            eJ.href = on ? data.elements_download.json : "#";
+            eX.classList.toggle("hidden", !on);
+            eJ.classList.toggle("hidden", !on);
         }
         panel.classList.remove("hidden");
     };
@@ -414,9 +452,12 @@
                             rec.room_count || 0, num(rec.measured_room_area_sqm),
                             num(rec.coverage_pct) + "%", gh.issue_count || 0];
                 }));
+            // Each floor folds away: ten floors of tables open at once made
+            // a page twenty screens long. The summary above says which to open.
             floors.forEach(function (f) {
-                html += floorHeading(f.name, "plate " + num(f.area_sqm) + " sq.m");
-                html += quantitySections(f, "floor:" + f.name);
+                html += '<details class="qfloor"><summary>' +
+                    floorHeading(f.name, "plate " + num(f.area_sqm) + " sq.m") +
+                    "</summary>" + quantitySections(f, "floor:" + f.name) + "</details>";
             });
             html += floorHeading("All floors together",
                                  floors.length + " floors");
@@ -443,6 +484,57 @@
     /* ----------------------------------------------- family rules editor --- */
     var rulesEditor = $("rulesEditor");
     var rulesLoaded = null;
+    // Floor usages (Office, Parking...), as the file lists them.
+    var usagesLoaded = [], defaultUsage = "";
+
+    /* The usage list: a name, the title words that mark a floor as that
+     * usage, and which one a floor takes when no word matches. */
+    function usageRow(u, isDefault) {
+        return '<div class="usage-row">' +
+            '<label class="usage-default" title="A floor whose title names no usage takes this one">' +
+            '<input type="radio" name="usageDefault"' + (isDefault ? " checked" : "") + ' /> default</label>' +
+            '<input class="usage-name" value="' + esc(u.name) + '" placeholder="Usage" />' +
+            '<input class="usage-kw" value="' + esc((u.keywords || []).join(", ")) +
+            '" placeholder="Title words, comma separated (PARKING, STILT...)" />' +
+            '<button type="button" class="btn btn-mini btn-ghost usage-del" title="Remove this usage">&times;</button>' +
+            '</div>';
+    }
+
+    function renderUsages(usages, dflt) {
+        usagesLoaded = usages || [];
+        defaultUsage = dflt || (usagesLoaded[0] || {}).name || "";
+        var box = $("usageList");
+        if (!box) { return; }
+        box.innerHTML = usagesLoaded.map(function (u) {
+            return usageRow(u, u.name === defaultUsage);
+        }).join("");
+    }
+
+    function collectUsages() {
+        var rows = $("usageList") ? $("usageList").querySelectorAll(".usage-row") : [];
+        var out = [], dflt = "";
+        Array.prototype.forEach.call(rows, function (row) {
+            var name = row.querySelector(".usage-name").value.trim();
+            if (!name) { return; }
+            out.push({ name: name, keywords: row.querySelector(".usage-kw").value.split(",")
+                .map(function (k) { return k.trim(); }).filter(Boolean) });
+            if (row.querySelector(".usage-default input").checked) { dflt = name; }
+        });
+        return { usages: out, default_usage: dflt || (out[0] || {}).name || "" };
+    }
+
+    /* Which floor usages a family applies to; none ticked = every floor. */
+    function usageChips(fam) {
+        var mine = (fam.usages || []).map(function (u) { return u.toLowerCase(); });
+        var names = (usagesLoaded.length ? usagesLoaded.map(function (u) { return u.name; }) : []);
+        if (!names.length) { return ""; }
+        return '<div class="rule-usages" title="Floors this family is used on. None ticked: every floor.">' +
+            '<span class="rule-usages-label">' + (mine.length ? "Floors:" : "Floors: all") + "</span>" +
+            names.map(function (n) {
+                return '<label class="usage-chip"><input type="checkbox" value="' + esc(n) + '"' +
+                    (mine.indexOf(n.toLowerCase()) >= 0 ? " checked" : "") + " />" + esc(n) + "</label>";
+            }).join("") + "</div>";
+    }
 
     /* `isNew` marks a family that exists only in the browser. Those carry
      * their own Save and Discard, because the pair at the top of the
@@ -463,6 +555,15 @@
             '<textarea class="rule-kw" rows="4" spellcheck="false" ' +
             'placeholder="One keyword per line">' +
             esc((fam.keywords || []).join("\n")) + "</textarea>" +
+            usageChips(fam) +
+            '<label class="rule-prec" title="When the texts and the geometry disagree about one of these ' +
+            '(Step 5), which result is taken. Not set: you are asked each time.">Conflicts: <select class="rule-prec-sel">' +
+            '<option value=""' + (!fam.precedence ? " selected" : "") + '>ask me</option>' +
+            '<option value="geometry"' + (fam.precedence === "geometry" ? " selected" : "") + '>geometry wins</option>' +
+            '<option value="geometry_always"' + (fam.precedence === "geometry_always" ? " selected" : "") +
+            ' title="Wherever the geometry finds one of these, it is taken - even over a text that names it something else">geometry always wins</option>' +
+            '<option value="text"' + (fam.precedence === "text" ? " selected" : "") + '>texts win</option>' +
+            "</select></label>" +
             (isNew ? ruleActions() : "") + "</div>";
     }
 
@@ -599,7 +700,11 @@
                     layer: val(".rule-layer-in").trim(),
                     color: Number(val(".rule-color")) || 7,
                     keywords: val(".rule-kw").split("\n").filter(
-                        function (l) { return l.trim(); })
+                        function (l) { return l.trim(); }),
+                    usages: Array.prototype.map.call(
+                        row.querySelectorAll(".rule-usages input:checked"),
+                        function (cb) { return cb.value; }),
+                    precedence: val(".rule-prec-sel")
                 };
             });
     }
@@ -614,6 +719,7 @@
                           "error");
                 return;
             }
+            renderUsages(data.usages, data.default_usage);
             renderRules(data.families);
             setStatus($("rulesStatus"), msg || "", msg ? "ok" : "");
         } catch (err) {
@@ -633,9 +739,9 @@
             var res = await fetch("/family_rules", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
+                body: JSON.stringify(Object.assign({
                     families: opts.families || collectRules()
-                })
+                }, collectUsages()))
             });
             var data = await res.json();
             if (!data.ok) {
@@ -644,6 +750,7 @@
                 setCardMsg(cardMsg, data.error || "Save failed.", "error");
                 return;
             }
+            renderUsages(data.usages, data.default_usage);
             renderRules(data.families);
             if (window.DA_familiesChanged) {
                 window.DA_familiesChanged(data.family_list,
@@ -698,6 +805,29 @@
 
         $("rulesSaveBtn").addEventListener("click", function () {
             saveRules(this, null);
+        });
+
+        if ($("usageAddBtn")) {
+            $("usageAddBtn").addEventListener("click", function () {
+                $("usageList").insertAdjacentHTML("beforeend", usageRow({ name: "", keywords: [] }, false));
+                $("usageList").lastElementChild.querySelector(".usage-name").focus();
+                setStatus($("rulesStatus"), "New usage added. Name it, then Save rules - " +
+                          "it then appears on every family card.", "info");
+            });
+            $("usageList").addEventListener("click", function (ev) {
+                var del = ev.target.closest && ev.target.closest(".usage-del");
+                if (!del) { return; }
+                del.closest(".usage-row").remove();
+                setStatus($("rulesStatus"), "Usage removed. Save rules to keep the change.", "info");
+            });
+        }
+
+        /* "Floors: all" until a usage is ticked. */
+        rulesEditor.addEventListener("change", function (ev) {
+            var box = ev.target.closest && ev.target.closest(".rule-usages");
+            if (!box) { return; }
+            box.querySelector(".rule-usages-label").textContent =
+                box.querySelector("input:checked") ? "Floors:" : "Floors: all";
         });
 
         /* Delegated, so a card added after page load is wired too. */

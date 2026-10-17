@@ -179,7 +179,7 @@ def polyline_spans(msp):
     return spans
 
 
-def load_document_ex(path, unit_override=None):
+def load_document_ex(path, unit_override=None, readonly=False):
     """Open a DXF and settle its units. Returns (doc, msp, units, info).
 
     The unit decision weighs an explicit override, the $INSUNITS header
@@ -187,20 +187,274 @@ def load_document_ex(path, unit_override=None):
     not trustworthy, as a file declaring Metres while drawn in
     millimetres demonstrated.
     """
-    doc = ezdxf.readfile(path)
+    doc, spans = _read(path, readonly)
     msp = doc.modelspace()
     try:
         header_code = int(doc.header.get("$INSUNITS", 0) or 0)
     except Exception:
         header_code = 0
-    units, info = resolve_units(header_code, polyline_spans(msp),
-                                unit_override)
+    if spans is None:
+        spans = polyline_spans(msp)
+    units, info = resolve_units(header_code, spans, unit_override)
     return doc, msp, units, info
 
 
-def load_document(path, unit_override=None):
+# -- Parsed drawings kept in memory -----------------------------------------
+# Every step reads the same drawing again - floors, texts, boundaries, the
+# geometry engine, the comparison - and parsing a 65 MB sheet takes 12 s
+# each time. The parsed drawing is kept pickled in memory (the two most
+# recent files) and every caller gets its own copy back in about 5 s, so a
+# step that adds boundaries to it never changes what the next step reads.
+import collections as _collections
+import os as _os
+import pickle as _pickle
+import threading as _threading
+
+_DOC_CACHE = _collections.OrderedDict()   # key -> (pickled doc, spans)
+_DOC_LOCK = _threading.Lock()
+_DOC_DONE = _threading.Condition(_DOC_LOCK)    # a pickled copy finished (or failed)
+_DOC_BUSY = set()
+DOC_WAIT_S = 120.0
+_DOC_KEEP = 2
+
+
+def _doc_key(path):
+    """The drawing's identity: its size and the hash of its bytes - a copy
+    of a file (the area step copies the drawing Generate wrote) is the same
+    drawing, a file written over is not."""
+    import hashlib
+    try:
+        h = hashlib.sha1()
+        size = 0
+        with open(path, "rb") as fh:
+            while True:
+                chunk = fh.read(1 << 22)
+                if not chunk:
+                    break
+                size += len(chunk)
+                h.update(chunk)
+    except OSError:
+        return None
+    return (size, h.hexdigest())
+
+
+# -- A plan placed twice ------------------------------------------------------
+# A drawing sometimes holds its whole plan twice, the second copy shifted by
+# a millimetre or so (BHUB's 4th floor: every INSERT, line and text drawn
+# again 0.9, 1.3 mm away). Every wall then reads as four faces, every label
+# twice, and the floor lost its staircases, a fire tower and part of its
+# toilets. When most of modelspace has a partner at one and the same small
+# offset, the shifted copy is dropped before anything reads the drawing.
+DUPLICATE_MAX_SHIFT = 25.0        # drawing units: a copy further off is a real repeat
+DUPLICATE_MIN_SHARE = 0.3         # share of modelspace that must be copied
+DUPLICATE_MIN_PAIRS = 30
+
+
+def _dup_signature(e):
+    """(signature, reference point) for an entity, or None."""
+    t = e.dxftype()
+    try:
+        if t == "INSERT":
+            p = e.dxf.insert
+            return (t, e.dxf.name, round(e.dxf.get("rotation", 0.0), 3),
+                    round(e.dxf.get("xscale", 1.0), 4), round(e.dxf.get("yscale", 1.0), 4)), (p.x, p.y)
+        if t in ("TEXT", "MTEXT"):
+            p = e.dxf.insert
+            txt = e.dxf.text if t == "TEXT" else e.text
+            return (t, txt, e.dxf.layer), (p.x, p.y)
+        if t == "LINE":
+            a, b = e.dxf.start, e.dxf.end
+            if (b.x, b.y) < (a.x, a.y):
+                a, b = b, a
+            return (t, e.dxf.layer, round(b.x - a.x, 2), round(b.y - a.y, 2)), (a.x, a.y)
+        if t == "LWPOLYLINE":
+            pts = list(e.get_points("xy"))
+            if not pts:
+                return None
+            x0, y0 = pts[0]
+            return (t, e.dxf.layer, len(pts), tuple(round(x - x0, 1) for x, _ in pts[1:6]),
+                    tuple(round(y - y0, 1) for _, y in pts[1:6])), (x0, y0)
+        if t in ("CIRCLE", "ARC"):
+            c = e.dxf.center
+            return (t, e.dxf.layer, round(e.dxf.radius, 2)), (c.x, c.y)
+        if t == "ELLIPSE":
+            c = e.dxf.center
+            m = e.dxf.major_axis
+            return (t, e.dxf.layer, round(m.x, 2), round(m.y, 2), round(e.dxf.ratio, 4)), (c.x, c.y)
+        if t == "LEADER":
+            v = list(e.vertices)
+            if not v:
+                return None
+            return (t, e.dxf.layer, len(v)), (v[0][0], v[0][1])
+        if t == "HATCH":
+            for path in e.paths:
+                pts = [tuple(v)[:2] for v in getattr(path, "vertices", [])]
+                if not pts:
+                    edges = getattr(path, "edges", [])
+                    pts = [(ed.start.x, ed.start.y) for ed in edges if hasattr(ed, "start")]
+                if pts:
+                    return (t, e.dxf.layer, e.dxf.pattern_name, len(e.paths), len(pts)), pts[0]
+            return None
+        if t == "DIMENSION":
+            p = e.dxf.defpoint
+            return (t, e.dxf.layer, e.dxf.get("geometry", "")), (p.x, p.y)
+    except Exception:                                 # noqa: BLE001
+        return None
+    return None
+
+
+def drop_shifted_copy(doc):
+    """Remove the second copy of a plan drawn twice a small shift apart.
+    Returns the number of entities removed (0 when nothing is copied)."""
+    try:
+        from scipy.spatial import cKDTree
+        import numpy as _np
+    except ImportError:
+        return 0
+    msp = doc.modelspace()
+    ents = list(msp)
+    groups = {}
+    for e in ents:
+        sp = _dup_signature(e)
+        if sp is None:
+            continue
+        groups.setdefault(sp[0], []).append((e, sp[1]))
+    counted = sum(len(g) for g in groups.values())
+    if counted < DUPLICATE_MIN_PAIRS * 2:
+        return 0
+    shifts = _collections.Counter()
+    pairs = []                                        # (e_a, e_b, dx, dy): b = a + d
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        pts = _np.array([p for _e, p in members], dtype=float)
+        for i, j in cKDTree(pts).query_pairs(DUPLICATE_MAX_SHIFT):
+            dx, dy = pts[j] - pts[i]
+            if (dx, dy) < (0.0, 0.0):
+                i, j, dx, dy = j, i, -dx, -dy
+            key = (round(dx, 1), round(dy, 1))
+            shifts[key] += 1
+            pairs.append((members[i][0], members[j][0], key))
+    if not shifts:
+        return 0
+    best, n = shifts.most_common(1)[0]
+    if n < DUPLICATE_MIN_PAIRS or n < DUPLICATE_MIN_SHARE * counted:
+        return 0
+    drop = set()
+    kept = set()
+    for a, b, key in pairs:
+        if abs(key[0] - best[0]) > 0.15 or abs(key[1] - best[1]) > 0.15:
+            continue
+        if id(a) in drop or id(b) in kept:
+            continue
+        drop.add(id(b))
+        kept.add(id(a))
+    removed = 0
+    for e in ents:
+        if id(e) in drop:
+            try:
+                msp.delete_entity(e)
+                removed += 1
+            except Exception:                         # noqa: BLE001
+                continue
+    if removed:
+        import logging
+        logging.getLogger(__name__).warning(
+            "plan drawn twice, %.2f, %.2f apart: %d copied entities dropped", best[0], best[1], removed)
+    return removed
+
+
+def _read(path, readonly=False):
+    """(a fresh parsed copy of the drawing, its polyline spans or None).
+
+    `readonly`: the caller only reads the drawing, so its own copy can be
+    pickled for the next step while it works - no second parse."""
+    key = _doc_key(path)
+    if key is not None:
+        with _DOC_LOCK:
+            hit = _DOC_CACHE.get(key)
+            if hit is None and key in _DOC_BUSY:
+                # The step before parsed this drawing a moment ago and its
+                # copy is being pickled: wait for it rather than parse the
+                # file again (12 s on a 65 MB sheet against a few seconds).
+                _DOC_DONE.wait_for(lambda: key not in _DOC_BUSY, timeout=DOC_WAIT_S)
+                hit = _DOC_CACHE.get(key)
+            if hit is not None:
+                _DOC_CACHE.move_to_end(key)
+        if hit is not None:
+            try:
+                return _pickle.loads(hit[0]), hit[1]
+            except Exception:                         # noqa: BLE001
+                with _DOC_LOCK:
+                    _DOC_CACHE.pop(key, None)
+    try:
+        doc = ezdxf.readfile(path)
+    except (ValueError, ezdxf.DXFStructureError):
+        # A drawing ezdxf cannot load as written - H10 Tower 3 holds an
+        # entity with no handle, so the copy this app saves of it read
+        # back as "Invalid handle None" - is read in recover mode, which
+        # repairs what it can, rather than failing the whole job.
+        from ezdxf import recover
+        doc, _auditor = recover.readfile(path)
+    drop_shifted_copy(doc)
+    if key is not None and readonly:
+        _remember_later(doc, key)
+    return doc, None
+
+
+def remember_written(doc, path):
+    """Keep the drawing this app has just written to `path` (Generate's
+    boundaries) as the next step would read it back - its shifted copy
+    dropped, pickled - so the area step, the preview and the final drawing
+    do not parse the file again. The caller is done with `doc`."""
+    key = _doc_key(path)
+    if key is not None:
+        _remember_later(doc, key, drop_copy=True)
+
+
+def _remember_later(doc, key, drop_copy=False):
+    """Keep a pickled copy of a drawing a read-only caller has just parsed,
+    made on a helper thread while the caller carries on reading it."""
+    with _DOC_LOCK:
+        if key in _DOC_CACHE or key in _DOC_BUSY:
+            return
+        _DOC_BUSY.add(key)
+
+    def work():
+        try:
+            if drop_copy:
+                drop_shifted_copy(doc)        # as _read does to a file it parses
+            spans = polyline_spans(doc.modelspace())
+            blob = _pickle.dumps(doc, protocol=_pickle.HIGHEST_PROTOCOL)
+            with _DOC_LOCK:
+                _DOC_CACHE[key] = (blob, spans)
+                _DOC_CACHE.move_to_end(key)
+                while len(_DOC_CACHE) > _DOC_KEEP:
+                    _DOC_CACHE.popitem(last=False)
+        except Exception:                             # noqa: BLE001
+            pass
+        finally:
+            with _DOC_LOCK:
+                _DOC_BUSY.discard(key)
+                _DOC_DONE.notify_all()
+
+    _threading.Thread(target=work, name="dxf-cache", daemon=True).start()
+
+
+def set_insunits(doc, units):
+    """Record the units the drawing was read in as its $INSUNITS, so a file
+    this app writes opens - here and in CAD - in the same units."""
+    try:
+        code = int(getattr(units, "code", 0) or 0)
+        if code:
+            doc.header["$INSUNITS"] = code
+    except Exception:                                 # noqa: BLE001
+        pass
+
+
+def load_document(path, unit_override=None, readonly=False):
     """As load_document_ex, without the diagnostics."""
-    doc, msp, units, _info = load_document_ex(path, unit_override)
+    doc, msp, units, _info = load_document_ex(path, unit_override, readonly)
     return doc, msp, units
 
 
@@ -225,10 +479,21 @@ def iter_entities(doc, msp, dxftypes: str, max_depth: int = None
     for e in msp.query(dxftypes):
         yield e, IDENTITY, 0
 
-    def descend(container, xform, depth, seen):
+    # A block placed 400 times was searched 400 times over (27,000 searches,
+    # 5 s, on 285 FD): each block's entities are looked up once per walk.
+    found = {}
+
+    def query(container, key, types):
+        k = (key, types)
+        got = found.get(k)
+        if got is None:
+            got = found[k] = list(container.query(types))
+        return got
+
+    def descend(container, ckey, xform, depth, seen):
         if depth > max_depth:
             return
-        for ins in container.query("INSERT"):
+        for ins in query(container, ckey, "INSERT"):
             name = ins.dxf.name
             if not name or name in seen or name not in doc.blocks:
                 continue
@@ -237,12 +502,12 @@ def iter_entities(doc, msp, dxftypes: str, max_depth: int = None
             except (ValueError, ZeroDivisionError, AttributeError):
                 continue
             block = doc.blocks[name]
-            for e in block.query(dxftypes):
+            for e in query(block, ("block", name), dxftypes):
                 yield e, child, depth
-            for item in descend(block, child, depth + 1, seen | {name}):
+            for item in descend(block, ("block", name), child, depth + 1, seen | {name}):
                 yield item
 
-    for item in descend(msp, IDENTITY, 1, frozenset()):
+    for item in descend(msp, ("msp",), IDENTITY, 1, frozenset()):
         yield item
 
 
@@ -256,8 +521,13 @@ def iter_inserts(doc, msp, max_depth: int = None
     if max_depth is None:
         max_depth = int(CONFIG["annotation"].get("block_recursion_depth", 3))
 
-    def walk(container, xform, depth, seen):
-        for ins in container.query("INSERT"):
+    found = {}                        # each block's INSERTs, looked up once per walk
+
+    def walk(container, ckey, xform, depth, seen):
+        got = found.get(ckey)
+        if got is None:
+            got = found[ckey] = list(container.query("INSERT"))
+        for ins in got:
             name = ins.dxf.name
             try:
                 child = xform.enter(ins)
@@ -267,8 +537,8 @@ def iter_inserts(doc, msp, max_depth: int = None
             if depth >= max_depth or not name or name in seen \
                or name not in doc.blocks:
                 continue
-            for item in walk(doc.blocks[name], child, depth + 1, seen | {name}):
+            for item in walk(doc.blocks[name], ("block", name), child, depth + 1, seen | {name}):
                 yield item
 
-    for item in walk(msp, IDENTITY, 0, frozenset()):
+    for item in walk(msp, ("msp",), IDENTITY, 0, frozenset()):
         yield item

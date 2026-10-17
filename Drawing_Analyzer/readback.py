@@ -17,9 +17,11 @@ import ezdxf
 from .dxf_reader import family_from_layer, _FAMILY_RULES
 from .units import DrawingUnits
 
-# ROOM_BOUNDARY carries the floor outline, not a room, and the drawing
-# pass never hands it to the rules either.
-SKIP_LAYERS = {"ROOM_VOID", "ROOM_BOUNDARY"}
+from . import layernames as LN
+
+# The floor outline is not a room (AI_FLOOR; ROOM_BOUNDARY in an older
+# drawing), and the drawing pass never hands it to the rules either.
+SKIP_LAYERS = {"ROOM_VOID", "ROOM_BOUNDARY", LN.FLOOR, LN.VOID}
 
 
 def _area_sqm(points):
@@ -46,7 +48,7 @@ def read_drawn_boundaries(path, units=None):
     labels = []
     for e in msp.query("MTEXT"):
         layer = e.dxf.layer
-        if not layer.endswith("_BOUNDARY"):
+        if not LN.is_room_layer(layer):
             continue
         labels.append({"layer": layer, "x": to_mm(e.dxf.insert.x),
                        "y": to_mm(e.dxf.insert.y), "text": e.text,
@@ -55,7 +57,7 @@ def read_drawn_boundaries(path, units=None):
     items = []
     for e in msp.query("LWPOLYLINE POLYLINE"):
         layer = e.dxf.layer
-        if not layer.endswith("_BOUNDARY") or layer in SKIP_LAYERS:
+        if not LN.is_room_layer(layer) or layer.upper() in SKIP_LAYERS:
             continue
         try:
             pts = [(float(to_mm(p[0])), float(to_mm(p[1])))
