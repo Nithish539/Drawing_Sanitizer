@@ -318,7 +318,14 @@ class AnnotateEndToEndTests(unittest.TestCase):
         # The rectangle around the L would be 100 sq.m.
         self.assertAlmostEqual(room["area_sqm"], 36.0, delta=0.3)
         statuses = sorted(stats["text_status_by_floor"]["F"].values())
-        self.assertEqual(statuses, ["absorbed", "secondary"])
+        # Both tags belong to the one space. Under rule rooms_from_spaces
+        # (2026-10-17) a stair tag with no flight of treads in or beside its
+        # space names no staircase, so the space is drawn with no name and
+        # both tags are absorbed; with the rule off one tag is the
+        # secondary label of the traced room and the other is absorbed.
+        self.assertIn(statuses, (["absorbed", "absorbed"], ["absorbed", "secondary"]))
+        if statuses == ["absorbed", "absorbed"]:
+            self.assertGreaterEqual(stats.get("spaces_stair_name_no_flight", 0), 1)
 
 
     def test_ramp_in_a_doorway_stays_out_of_the_room(self):

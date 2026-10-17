@@ -860,6 +860,27 @@ RULES = [
         "default": True,
     },
     {
+        "key": "rooms_from_spaces",
+        "group": "shape",
+        "title": "Rooms are the enclosed spaces, named last",
+        "detail": "Once the walls, the doors and the X marks are decided, "
+                  "every enclosed space of the floor is traced with no text "
+                  "(the open floor, wall cavities, doorway strips and pockets "
+                  "left out), the staircases are the spaces holding a flight "
+                  "of treads with UP / DOWN or a stair name in them, an open "
+                  "lift lobby is closed at the lift banks' ends, and only then "
+                  "is each space named by the texts standing inside it - "
+                  "never by one outside. A space of 10 sq.m or less along a "
+                  "shaft's X with a door of its own is the shaft's room "
+                  "(AI_MEP) whatever is written in it; a shaft-like text "
+                  "decides only such a space; a text that reads as a note or "
+                  "the family library's ignore words never name. A label the "
+                  "spaces did not take still traces its room from its label, "
+                  "as before. Off: every room is traced outward from its "
+                  "label (Phase B), the text first.",
+        "default": True,
+    },
+    {
         "key": "merge_overlaps",
         "group": "guards",
         "title": "Merge boundaries that sit on top of each other",

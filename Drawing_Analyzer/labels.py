@@ -166,7 +166,7 @@ class LabelRules:
 
     def __init__(self, tag_patterns=None, ignore_patterns=None,
                  family_rules=None, equipment_tags=None,
-                 max_name_chars=None):
+                 max_name_chars=None, ignore_words=None):
         self.max_name_chars = int(max_name_chars or 28)
         self.equipment = {str(t).strip().upper()
                           for t in (equipment_tags or _DEFAULT_EQUIPMENT_TAGS)
@@ -175,6 +175,13 @@ class LabelRules:
                         for p in (tag_patterns or _DEFAULT_TAG_PATTERNS)]
         self.ignore_res = [re.compile(p, re.IGNORECASE)
                            for p in (ignore_patterns or _DEFAULT_IGNORE_PATTERNS)]
+        # the family library's ignore words (family_rules.json "ignore_words",
+        # 2026-10-17): a text that is only such a word - SLOPE on a ramp -
+        # is never a room's name
+        for w in ignore_words or ():
+            w = str(w or "").strip()
+            if w:
+                self.ignore_res.append(re.compile(r"^\s*" + re.escape(w) + r"\s*$", re.IGNORECASE))
         self.keywords = []
         for fam in (family_rules or []):
             for kw in fam.get("keywords", []):
@@ -234,6 +241,8 @@ _NOTE_WORDS_RE = re.compile(
 # note, never the name of a space - though it says TERRACE.
 _QUANTITY_RE = re.compile(r"^\d+\s*NOS\b", re.IGNORECASE)
 _DETAIL_RE = re.compile(r"\bDETAILS?\b|\bREFER\b|\bSEE DRG\b")
+# a text wrapped in parentheses: a remark about what is drawn there, not a name
+_REMARK_RE = re.compile(r"^\s*\([^()]*\)\s*$", re.S)
 
 
 def name_part(text) -> str:
@@ -323,6 +332,12 @@ def label_tier(text, rules: LabelRules) -> int:
     # not the room it names (H10 Tower 2: TOILET DETAILS traced 130 sq.m)
     if _DETAIL_RE.search(t.upper()):
         return TIER_LONG
+    # a text wrapped in parentheses is a remark ("(EMERGENCY EXIT)" beside
+    # a lift lobby's door), never the name of the space it stands in
+    # (2026-10-17: it made the lobby between two lift banks hold "two
+    # rooms' names")
+    if _REMARK_RE.match(t):
+        return TIER_LONG
     name = name_part(t) or t
     if len(name.replace("\n", " ")) > rules.max_name_chars:
         lines = name.split("\n")
@@ -397,10 +412,10 @@ def looks_like_room_name(text, rules: LabelRules = None) -> bool:
     return label_tier(t, rules) <= TIER_PLAIN
 
 
-def build_rules(config: Dict, family_rules: Sequence[Dict]) -> LabelRules:
+def build_rules(config: Dict, family_rules: Sequence[Dict], ignore_words=None) -> LabelRules:
     lf = (config or {}).get("label_filters") or {}
     return LabelRules(tag_patterns=lf.get("device_tag_patterns"),
                       ignore_patterns=lf.get("ignore_patterns"),
                       equipment_tags=lf.get("equipment_tags"),
                       max_name_chars=lf.get("max_room_name_chars"),
-                      family_rules=family_rules)
+                      family_rules=family_rules, ignore_words=ignore_words)

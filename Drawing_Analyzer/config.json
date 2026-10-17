@@ -310,7 +310,10 @@
     "color": 4,
     "_gap_windows_note": "Windows in a wall gap (window_openings): a gap from a wall's end to the next face across its band, gap_mm long, with glazing or a louvre drawn along evidence_cover_share of it - a line on an evidence_layer_regex layer or in an evidence_block_regex block, not one matching not_evidence_regex (glass partitions, mirrors, the area-plan overlay). Across, as deep as the evidence in the gap. Part of the wall, drawn on AI_WINDOW. The X-marked windows are found as before (wall_output / x_classify).",
     "gap_windows": true,
-    "gap_mm": [250, 6000],
+    "gap_mm": [
+      250,
+      6000
+    ],
     "evidence_cover_share": 0.6,
     "evidence_layer_regex": "GLAZ|WINDOW|(^|[^A-Z])WIN([^A-Z]|$)|WDW|WNDW|LOUV|LOVER|CURTAIN|MULLION",
     "evidence_block_regex": "WINDOW|WDW|WNDW|LOUV|LOVER|GLAZ|(^|[^A-Z])W-?\\d",
@@ -375,10 +378,16 @@
     "inset_mm": 40,
     "_inset_note": "Objects are looked for this far inside the element's faces, so one that only touches a face (a door frame, a WC against the wall) is not under it.",
     "door_arc_min_in_mm": 150,
-    "door_radius_mm": [450, 1300],
+    "door_radius_mm": [
+      450,
+      1300
+    ],
     "_door_note": "A door swing - an arc of a door-size radius on a door layer or in a door block - with at least door_arc_min_in_mm of it inside is an object under the wall (BHUB 1st Floor: three 600 mm cubicle doors, about 317 mm of each swing under a 300 mm structural band).",
     "fixture_min_share": 0.4,
-    "fixture_area_sqm": [0.05, 3.0],
+    "fixture_area_sqm": [
+      0.05,
+      3.0
+    ],
     "_fixture_note": "A sanitary fixture body - the outline round one fixture block placed (WC, basin, urinal), of this size - with fixture_min_share of it inside is under the wall. A cistern partly inside a duct wall is not (the WC-ledge rule handles those).",
     "max_thickness_mm": 600,
     "max_area_sqm": 15,
@@ -412,10 +421,16 @@
     "_openings_note": "A window or a cut-out found in a wall stays part of the wall, drawn over it on AI_WINDOW / AI_CUTOUT (the corrected walls of BHUB and XA run on through louvres and cut-outs). In the final drawing a cut-out is part of the wall only when it lies in a wall run (the wall going on past both its ends in line, or on both its long sides): one lining a wall's face inside a shaft (P285: the PHE shaft's strips, FHC-3) stays the shaft's opening. false: cut out of the wall.",
     "cutout_in_wall_probe_mm": 60,
     "door_leaf_doors": true,
-    "door_leaf_panel_mm": [450, 1300],
+    "door_leaf_panel_mm": [
+      450,
+      1300
+    ],
     "_door_leaf_note": "A door drawn by its leaf shut in the opening - a panel of two door-layer lines 10-80 mm apart, door_leaf_panel_mm long, framed at both ends or drawn open from one - is a door even where its swing describes no opening (P285: the shaft doors FD4 / FD8 and D4, with 325 mm swings, swings about a point outside the jamb, or a 30 degree swing in a wall drawn through the door). In a wall band it opens the band across its thickness; in a gap it opens the gap from jamb to jamb.",
     "lift_doors": true,
-    "lift_door_mm": [700, 2600],
+    "lift_door_mm": [
+      700,
+      2600
+    ],
     "_lift_doors_note": "A lift's entrance - a gap of lift_door_mm in the lift well's own wall, the rest of that side walled, opening onto the floor - is a door of kind lift (its doors slide; there is no swing), primary (AI_P_DOORS: between the lift and the floor in front of it). Only a lift with its stop on this floor: not LIFT PRE / PRESS, a lift lobby or machine room, or LIFT WELL BELOW (lift_not_regex).",
     "balcony_parapet_not_wall": false,
     "_parapet_note": "false (default): the parapet a balcony or refuge area grows over (balcony_outer_face: only along its open side, never its end walls) stays a wall on AI_WALL as well - the balcony is measured to its outer face. true: it leaves the walls of the Step 3 drawing and of the final drawing.",
@@ -425,8 +440,14 @@
     "door_line_band_mm": 100.0,
     "_door_as_line_note": "Test_2: each door is drawn as a single line joining the walls either side, on the face of the room it opens into (a shaft's room run to its door, rule shaft_room_to_door_line: on the outer face, where the walls either side end). The opening it closes is kept in the door's XDATA, so the area step and the element list still read it. door_line_band_mm: a door line drawn by hand, with no opening kept, is read as a band this far either side of it. false: the opening as a closed polyline, as before.",
     "_doors_note": "Door openings - the gap in the wall a door closes - drawn on AI_DOOR: never rooms, never walls, never in an area. Found from the door swings (door_openings): an arc of door_radius_mm sweeping door_sweep_deg, on any layer (BHUB and XA draw shaft doors on the shaft's layer, part-open). At a wall: the gap from the wall's end to the next face across its band, the swing's centre within door_jamb_reach_mm of a jamb and one of its ends reaching the gap; a single leaf fits 0.55-1.35 of its radius, a pair 1.6-2.5 with a swing at each jamb. Across, the gap is as deep as the lines drawn in it along the wall (a frame: XA's shaft doors are their 76 mm frame), else the wall's thickness. With no wall gap - a WC cubicle or shaft door in a board - a full swing (75+ degrees) with its leaf drawn open gives the opening: hinge to where the leaf shuts, as deep as the board's faces (door_leaf_mm with none).",
-    "door_radius_mm": [450, 1300],
-    "door_sweep_deg": [10, 100],
+    "door_radius_mm": [
+      450,
+      1300
+    ],
+    "door_sweep_deg": [
+      10,
+      100
+    ],
     "door_jamb_reach_mm": 350,
     "door_leaf_mm": 12,
     "door_between_ends_depth_mm": 100,
@@ -435,13 +456,28 @@
     "door_ellipse_round": 0.08,
     "_door_ellipses_note": "A door swing drawn as an ELLIPSE (285 FD, the P285 11th floor: 139 room exits were missed) is read like an arc when it is a circle's arc - its points within door_ellipse_round of one radius from its centre (the hinge). A flattened ellipse is not a swing.",
     "door_kinds": true,
-    "door_side_probes_mm": [150, 300, 500, 800, 1100, 1400],
+    "door_side_probes_mm": [
+      150,
+      300,
+      500,
+      800,
+      1100,
+      1400
+    ],
     "door_shaft_label_mm": 900,
-    "door_shaft_families": ["Shaft", "Lift"],
+    "door_shaft_families": [
+      "Shaft",
+      "Lift"
+    ],
     "door_cubicle_board_max_mm": 60,
     "door_secondary_color": 30,
     "_door_kinds_note": "A door is there to get out of a room. Each opening is told by the rooms on its two sides, probed door_side_probes_mm beyond its faces (the smallest room holding a point): a shaft, riser or lift on either side (door_shaft_families, or a name naming a shaft, riser, duct, vent, FHC, tenant / comm / pressurisation shaft; with no room traced, such a label within door_shaft_label_mm) is a shaft door; the same room on both sides of a door in a board (no deeper than door_cubicle_board_max_mm) is a WC cubicle door; anything else is an exit - also the same room on both sides of a door in a wall (the room was traced through its own door). This is stored on each door (XDATA). All of them are cut out of the walls. Each room's exits are listed when the areas are read (exits, exits_to).",
-    "door_main_families": ["Lift Lobby", "Circulation", "Staircase", "Service Lobby"],
+    "door_main_families": [
+      "Lift Lobby",
+      "Circulation",
+      "Staircase",
+      "Service Lobby"
+    ],
     "door_open_floor_min_sqm": 1.0,
     "door_open_contact_mm": 600,
     "_door_levels_note": "Every door is primary or secondary (2026-10-17). Primary (AI_P_DOORS, door_color): a door between two different spaces - two rooms, or a room and the untraced common floor; a lift's and a shaft's door included. It stops a room's boundary (rule boundary_on_evidence). Secondary (AI_S_DOORS, door_secondary_color): a door inside one room - a WC cubicle's door, or a door with the same room on both sides; it never stops a room. door_main_families / door_main_area_regex / door_open_* still decide the main accessible area, which now only marks a primary door with main area on both sides (doors_primary_within_main). Drawings written before keep AI_DOOR_PRIMARY / AI_DOOR_SECONDARY, read as doors. Which way a door swings is never used.",
@@ -919,7 +955,10 @@
     "layer_regex": "GLASS|GLAZ|CURTAIN|MULLION",
     "block_regex": "GLASS|GLAZ|CURTAIN",
     "not_regex": "MIRROR|^\\d+(\\.\\d+)+\\s|\\bEXC\\b",
-    "pair_mm": [3, 150],
+    "pair_mm": [
+      3,
+      150
+    ],
     "single_line_width_mm": 20,
     "min_run_mm": 300,
     "color": 140
@@ -979,7 +1018,6 @@
     "medium": 0.6,
     "weights": {}
   },
-
   "slab_edge_lines": {
     "_comment": "A long single line on a detail or section layer that runs through X-marked shafts is the edge of the slab, not a wall (rule slab_edge_not_boundary; P285: the 13.8 m line on a-details by the east balcony). It bounds no room and no wall, in Step 3 and in the geometry engine.",
     "enabled": true,
@@ -990,10 +1028,16 @@
   },
   "rooms_and_doors": {
     "_comment": "What a floor's rooms and doors settle together (Test_2; the stair's open well - an X the X sequence made a void between two flights - and rules shaft_room_mep, shaft_room_to_door_line, lift_no_door_machine_room, wall_gaps_filled).",
-    "shaft_room_families": ["Shaft", "Fire / Life Safety", "Unknown", "Plumbing", "MEP / Services"],
+    "shaft_room_families": [
+      "Shaft",
+      "Fire / Life Safety",
+      "Unknown",
+      "Plumbing",
+      "MEP / Services"
+    ],
     "shaft_room_family": "MEP / Services",
     "shaft_room_side_mm": 250.0,
-    "shaft_room_max_sqm": 12.0,
+    "shaft_room_max_sqm": 10.0,
     "door_touch_mm": 300.0,
     "_shaft_room_note": "A room of one of shaft_room_families sharing shaft_room_side_mm or more of its outline with an X-marked shaft, and with a door (door_touch_mm of the door along its outline, or half the door's width), is the shaft's room: drawn in shaft_room_family (AI_MEP) - when it is no larger than shaft_room_max_sqm and is named for a shaft (TEN, ELE SHAFT, FHC ...), for the X beside it, or not at all. A refuge area or a store beside a shaft is not.",
     "lift_machine_room_gap_mm": 450.0,
@@ -1024,7 +1068,10 @@
   "x_placement": {
     "_note": "The X sequence (xplace.py, 2026-10-16, final): every X mark, on any layer and of any size, is a void to start with, then decided once - 2 shaft, 3 lift, 4 window, 5 cut-out, 6 column, 7 void - and nothing overrides it (not the Step 3 family, the Geometry tab, the element or geometry engine, the final drawing). wall_gap_mm: a shaft's X has a wall within this of a side (on BHUB, Centaurus, P285 and XA every real shaft is within 20 mm, the nearest X that is not a shaft 75 mm). run_*: the wall carries on past an end of the X at its thickness (within run_tol_mm), over run_probe_mm, covering run_cover of it - the X is an opening in the wall. tag_reach_mm: a door / window / cut-out tag this close to an X describes it. *_tag_re: the tag patterns; a shaft's name is never a tag, and a code with no digit and two vowels is a word.",
     "wall_gap_mm": 50.0,
-    "lift_side_mm": [1800.0, 3600.0],
+    "lift_side_mm": [
+      1800.0,
+      3600.0
+    ],
     "lift_aspect_max": 1.5,
     "lift_walled_sides": 3,
     "slot_side_mm": 150.0,
@@ -1053,10 +1100,30 @@
     "label_wall_cross_mm": 80.0,
     "run_on_mm": 100.0,
     "column_max_side_mm": 1200.0,
-    "column_ring_mm": [5.0, 60.0],
+    "column_ring_mm": [
+      5.0,
+      60.0
+    ],
     "tags_never_name": true,
     "door_tag_re": "^[A-Z]{0,4}D(?:[\\s\\-]?\\d+[A-Z]?)?$",
     "window_tag_re": "^[A-Z]{0,4}W(?:[\\s\\-]?\\d+[A-Z]?)?$",
     "cutout_tag_re": "^C[\\s\\-]?\\d+[A-Z]?$"
+  },
+  "spaces": {
+    "_note": "Rule rooms_from_spaces (2026-10-17): the rooms are the enclosed spaces of the floor, found with no text and named last. The free floor is cut into its connected pieces on a grid of grid_mm cells (every wall line, door closure and decided outline sealed by one cell); a piece of open_floor_sqm or more - or holding open_floor_share of the free floor (a small plate's open floor is under 1000 sq.m) - is the open floor (no room), one narrower than 2 x min_half_width_mm is a wall cavity or a doorway strip, one under min_sqm is nothing; every other piece is traced once at its widest point. A space with no text and no door under pocket_max_sqm, or under edge_pocket_max_sqm along the plate's edge, is a pocket, not a room. Two lift banks facing each other lobby_gap_mm apart hold a lobby closed at their ends (lobby_min_sqm or more). An unnamed space is drawn (draw_unnamed) as unnamed_label on the Unknown family's layer. The shaft room's size is rooms_and_doors.shaft_room_max_sqm.",
+    "grid_mm": 50.0,
+    "open_floor_sqm": 1000.0,
+    "open_floor_share": 0.5,
+    "min_half_width_mm": 140.0,
+    "min_sqm": 0.3,
+    "pocket_max_sqm": 1.5,
+    "edge_pocket_max_sqm": 6.0,
+    "lobby_gap_mm": [
+      2000.0,
+      8000.0
+    ],
+    "lobby_min_sqm": 10.0,
+    "draw_unnamed": true,
+    "unnamed_label": "ROOM"
   }
 }

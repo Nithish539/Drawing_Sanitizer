@@ -232,6 +232,20 @@ X_IN_SPACE_PLATE_SHARE = float((CONFIG.get("x_placement") or {}).get("in_space_p
 X_WELL_REACH_MM = float((CONFIG.get("x_placement") or {}).get("well_reach_mm", 2500.0))
 # what the mask holds that is never wall once decided (locked.LockedMask)
 LOCKED_NEVER_WALL = ("x_shaft", "x_lift", "x_void", "x_cutout_loose")
+# Rule rooms_from_spaces (2026-10-17): the rooms are the enclosed spaces,
+# found with no text and named last (spaces.py; config "spaces").
+_SPC = CONFIG.get("spaces") or {}
+SPACES_GRID_MM = float(_SPC.get("grid_mm", 50.0))
+SPACES_OPEN_FLOOR_SQM = float(_SPC.get("open_floor_sqm", 1000.0))
+SPACES_OPEN_FLOOR_SHARE = float(_SPC.get("open_floor_share", 0.5))
+SPACES_MIN_HALF_WIDTH_MM = float(_SPC.get("min_half_width_mm", 140.0))
+SPACES_MIN_SQM = float(_SPC.get("min_sqm", 0.3))
+SPACES_POCKET_MAX_SQM = float(_SPC.get("pocket_max_sqm", 1.5))
+SPACES_EDGE_POCKET_MAX_SQM = float(_SPC.get("edge_pocket_max_sqm", 6.0))
+SPACES_LOBBY_GAP_MM = tuple(float(v) for v in (_SPC.get("lobby_gap_mm") or (2000.0, 8000.0)))
+SPACES_LOBBY_MIN_SQM = float(_SPC.get("lobby_min_sqm", 10.0))
+SPACES_DRAW_UNNAMED = bool(_SPC.get("draw_unnamed", True))
+SPACES_UNNAMED_LABEL = str(_SPC.get("unnamed_label", "ROOM"))
 # what an unnamed X is called once the X sequence made it a lift or a void
 X_LIFT_LABEL        = "LIFT"
 X_VOID_LABEL        = "VOID"
@@ -5222,6 +5236,34 @@ def guard_against_walls(poly, holes, bbox, label_xy, wall_lines, hatches, cut_mm
 
 
 # -- Shafts: what an X has to stand in ------------------------------------
+def _collect_stair_marks(doc, msp, units, words=None):
+    """The UP / DOWN / DN marks of the flights, blocks included: [(x, y)]
+    in mm. Evidence for a staircase (rule rooms_from_spaces), never a
+    label - the extraction leaves them out of the texts. words: the
+    Staircase family's evidence words (family_rules.json)."""
+    if words is None:
+        words = []
+        for fam in _FAMILY_RULES:
+            if fam.get("name") == "Staircase":
+                words = list(fam.get("evidence") or [])
+    words = [w for w in (words or ("UP", "DOWN", "DN")) if w]
+    if not words:
+        return []
+    rx = re.compile(r"^\s*(%s)\b" % "|".join(re.escape(w) for w in words), re.IGNORECASE)
+    out = []
+    for e, xf, _d in iter_entities(doc, msp, "TEXT MTEXT"):
+        try:
+            t = e.dxf.text if e.dxftype() == "TEXT" else e.plain_text()
+            if not rx.match(str(t or "")):
+                continue
+            p = e.dxf.insert
+            x, y = units.point_to_mm(*xf.apply(p[0], p[1]))
+            out.append((float(x), float(y)))
+        except Exception:                             # noqa: BLE001
+            continue
+    return out
+
+
 def _collect_circles(doc, msp, units):
     """Every circle in the drawing, blocks included: (cx, cy, r) in mm."""
     out = []
@@ -8587,6 +8629,7 @@ def _prepare_floors(doc, msp, units, floors, rule):
             "x_lines": x_lines, "void_outlines": void_outlines,
             "fixtures": fixtures, "all_swings": all_swings,
             "circles": _collect_circles(doc, msp, units),
+            "stair_marks": _collect_stair_marks(doc, msp, units),
             "columns": columns,
             "wall_hatches": wall_hatches,
             "wall_hatch_islands": wall_hatch_islands,
@@ -9007,7 +9050,7 @@ def set_pass_cache_dir(path):
 _PASS_MODULES = ("dxf_reader.py", "roomtrace.py", "walltrace.py", "elements.py", "confidence.py", "labels.py",
                  "rules.py", "geometry.py", "xregions.py", "dxfio.py", "levels.py", "units.py",
                  "layernames.py", "layers.py", "userrules.py", "geoengine.py", "jobs.py", "config.py",
-                 "xplace.py", "elementid.py", "locked.py", "family_rules.json")
+                 "xplace.py", "elementid.py", "locked.py", "spaces.py", "family_rules.json")
 # config.json sections only read after the floor passes
 _PASS_CONFIG_SKIP = ("area_statement", "facade")
 _STAMP = []
@@ -9149,7 +9192,7 @@ def _floor_pass_rules(job):
         # A worker process loads the rules file at import; the parent may
         # hold newer rules saved from the UI since.
         _FAMILY_RULES = job["family_rules"]
-        _LABEL_RULES = build_rules(CONFIG, _FAMILY_RULES)
+        _LABEL_RULES = build_rules(CONFIG, _FAMILY_RULES, ignore_words=_FAMILY_IGNORE_WORDS)
     rule = job["rule"]
     raw_segs = job["segs"]
     x_lines = job["x_lines"]
@@ -11051,8 +11094,15 @@ def _floor_pass_rules(job):
         neither does."""
         from shapely.geometry import Point
         from shapely.ops import unary_union
-        lifts = [g for g in (_merged_geom(d) for d in drawn
-                             if d.get("x_class") == "lift" or d.get("family_forced") == "Lift")
+
+        def _is_lift(d):
+            # an X lift, a lift forced, or a lift named by its text (a bank
+            # traced from its labels or as spaces - Aquila, 2026-10-17)
+            if d.get("x_class") == "lift" or d.get("family_forced") == "Lift":
+                return True
+            return (d.get("family_forced") is None and d.get("source") == "P"
+                    and family_for_label(d.get("label") or "", _FAMILY_RULES)["name"] == "Lift")
+        lifts = [g for g in (_merged_geom(d) for d in drawn if _is_lift(d))
                  if g is not None and not g.is_empty and g.distance(Point(tx, ty)) <= LIFT_BANK_REACH_MM]
         if not lifts:
             return None
@@ -11370,6 +11420,511 @@ def _floor_pass_rules(job):
         x_decided = True
         stats["x_decided_before_rooms"] += 1
     _tick("05 phase A (labels to X marks), X decided")
+
+    # -- The rooms from the spaces (rule rooms_from_spaces, 2026-10-17) ---
+    # The walls, the doors and the X marks are decided. First the shafts'
+    # compartments (shaft_compartments: an X's walled cell, its door and
+    # the partition lines closed, is the shaft's - rule shaft_compartment,
+    # run here before any room; a compartment is a wall to the rooms and
+    # never wall material). Then every enclosed space of the floor is
+    # traced with no text (spaces.py): the free floor is cut into its
+    # pieces on a grid and each piece traced once on the walls and doors,
+    # with the doorless openings closed if that leaks, on the plain lines
+    # last (not under rule boundary_on_evidence). The staircases are the
+    # spaces holding a flight with UP / DOWN or a stair name in them, or a
+    # named landing with its flight in the cell beside it; an open lift
+    # lobby is closed at its lift banks' ends (rule lift_lobby_to_lift_bank).
+    # Only then is each space named by the texts standing inside it - never
+    # by one outside. A space of SHAFT_ROOM_MAX_SQM or less along a shaft's
+    # X with a door of its own is the shaft's room (AI_MEP) whatever is
+    # written in it. A space holding two rooms' names is left to Phase B,
+    # whose leak search splits it; so is a label no space took.
+    shaft_review = []
+    shaft_notes = {}
+    spaces_log_out = []                  # what became of every space (stats spaces_by_floor)
+    spaces_items_out = []                # (log entry, the item drawn) - the later passes' verdict
+    spaces_ready = False                 # the stage ran: its helpers can be used after Phase B
+
+    def _shaft_tracer_on(items):
+        """The shaft compartments' tracer (built once, on demand): every
+        opening closed - the doors too - and the plain lines of the drawing
+        (a partition line between a shaft and its room) as walls. items:
+        the X items - a doorway or gap closer never runs through an X."""
+        def _build():
+            never = [k.upper() for k in _HARD_EXCLUDE_KEYWORDS]
+            skip_words = [k.upper() for k in _WALL_EXCLUDE_KEYWORDS]
+            plain = []
+            for sg in raw_segs:
+                lu = (sg[4] or "").upper()
+                if (any(k in lu for k in never) or any(k in lu for k in skip_words)
+                        or _is_fixture_layer(lu) or (len(sg) > 7 and sg[7])
+                        or _other_level_xref(lu)
+                        or (x_lines and _seg_key(sg) in x_lines)
+                        or sg[5] < 50.0):
+                    continue
+                plain.append((sg[0], sg[1], sg[2], sg[3]))
+            # on the walls as drawn (faces, caps, hatch edges, slit and
+            # doorway closers) - not on the X outlines settled as walls
+            # for the rooms, which would close every trace at the X
+            closers = (list(door_closing) + list(threshold) + list(gap_closing) + list(slits) +
+                       list(face_closers) + list(retry_gaps))
+            if closers:
+                # a doorway or gap closer never runs through an X: a
+                # shaft's door is on its side (XA: a lift's door line
+                # carried 1.9 m on through SPARE SH cut 85 mm off it)
+                from shapely.geometry import box as _xb, LineString as _xl
+                from shapely.strtree import STRtree as _xst
+                xin = []
+                for d0 in items:
+                    if d0.get("source") != "X":
+                        continue
+                    for r0 in (d0.get("xrects") or [d0.get("bbox")]):
+                        if r0 and r0[2] - r0[0] > 100.0 and r0[3] - r0[1] > 100.0:
+                            xin.append(_xb(r0[0] + 30.0, r0[1] + 30.0, r0[2] - 30.0, r0[3] - 30.0))
+                if xin:
+                    xt_ = _xst(xin)
+                    kept_ = []
+                    for c0 in closers:
+                        ln = _xl([(c0[0], c0[1]), (c0[2], c0[3])])
+                        if any(xin[k].intersection(ln).length > 50.0 for k in xt_.query(ln)):
+                            stats["closers_through_x_dropped"] += 1
+                            continue
+                        kept_.append(c0)
+                    closers = kept_
+            return build_tracer(list(faces) + list(caps) + closers +
+                                list(edges) + list(hatch_lines) +
+                                plain + list(x_frame_segs))
+        return _build
+
+    if rule["rooms_from_spaces"] and ep and tracer is not None:
+        try:
+            from . import spaces as _spc
+            from . import elements as _el_s
+            from shapely.geometry import Polygon as _SPoly, Point as _SPt, box as _SBox
+            # the shafts' compartments before any room (pass 10 below skips
+            # the X marks seen here); one grown past its X is a wall to the
+            # rooms traced now and never wall material (LockedMask)
+            if rule["shaft_compartment"]:
+                shaft_compartments(drawn, _shaft_tracer_on(drawn), raw_segs, floor_poly, stats, shaft_review,
+                                   shaft_notes, floor_family_overrides, family_rules=_FAMILY_RULES)
+                grown = []
+                for d0 in drawn:
+                    if d0.get("source") != "X" or not d0.get("cell") or d0.get("x_class", "shaft") != "shaft":
+                        continue
+                    g0 = _merged_geom(d0)
+                    if g0 is None or g0.is_empty or g0.geom_type != "Polygon":
+                        continue
+                    xb_ = d0.get("x_box")
+                    if xb_ and g0.area <= 1.05 * max(1.0, (xb_[2] - xb_[0]) * (xb_[3] - xb_[1])):
+                        continue                      # the X itself, a wall to the rooms already
+                    grown.append(g0)
+                if grown:
+                    LM.lock("x_shaft", grown)
+                    cell_edges2 = []
+                    for g0 in grown:
+                        cell_edges2.extend(_polygon_edges([tuple(p) for p in list(g0.exterior.coords)[:-1]]))
+                    f_walls = f_walls + cell_edges2
+                    wall_idx = BandIndex(f_walls, band=INDEX_BAND, axis_ratio=WALL_AXIS_RATIO)
+                    tracer = build_tracer(f_walls)
+                    for cache_ in (closed_tracer, lines_tracer_box, base_box):
+                        del cache_[:]
+                    leak_tracers.clear()
+                    stats["spaces_compartments_as_walls"] += len(grown)
+                _tick("05a shaft compartments (before the rooms)")
+            if tracer is None:
+                raise RuntimeError("no tracer once the compartments were added")
+            # what no space is: the X cells, the voids, the loose cut-outs,
+            # the columns - and the shapes the Geometry tab decided
+            blocked, x_shaft_g, x_lift_g, x_label_of = [], [], [], {}
+            for d0 in drawn:
+                if d0.get("source") in ("X", "V", "G"):
+                    g0 = _merged_geom(d0)
+                    if g0 is None or g0.is_empty:
+                        continue
+                    blocked.append(g0)
+                    if d0.get("x_class") == "shaft":
+                        x_shaft_g.append(g0)
+                        x_label_of[id(g0)] = str(d0.get("label") or "")
+                    elif d0.get("x_class") == "lift":
+                        x_lift_g.append(g0)
+            for c0 in cutouts:
+                if not c0.get("in_wall") and c0.get("poly"):
+                    try:
+                        blocked.append(_SPoly(c0["poly"]).buffer(0))
+                    except (ValueError, TypeError):
+                        pass
+            for c0 in job.get("columns") or ():
+                try:
+                    blocked.append(_SPoly(c0).buffer(0))
+                except (ValueError, TypeError):
+                    pass
+            tab_g = []
+            for g0 in geo:
+                try:
+                    pts0 = [tuple(p) for p in (g0.get("poly") or [])]
+                    q0 = _SPoly(pts0).buffer(0) if len(pts0) >= 3 else _SBox(*g0["bbox"])
+                    if not q0.is_empty:
+                        tab_g.append(q0)
+                except (ValueError, TypeError, KeyError):
+                    continue
+            door_lines = list(retry_gaps[first_door_gap:])       # the doors found, closed
+            # the flights' treads are walls to the room search (drawn on a
+            # structure layer, H10 Tower 1: on COLUMN), and would cut a
+            # flight's cell into strips: they are left out of the grid, and
+            # each flight is traced first, from its middle, on the walls
+            # less its treads
+            segs_arr = _segs_np()
+            runs_sp = _tread_runs(segs_arr, with_runs=True) if len(segs_arr) else []
+
+            def _is_tread_line(w):
+                L_ = math.hypot(w[2] - w[0], w[3] - w[1])
+                if L_ < 0.6 * STAIR_TREAD_MIN_LEN:
+                    return False
+                hz_ = abs(w[3] - w[1]) <= 0.03 * L_
+                vt_ = abs(w[2] - w[0]) <= 0.03 * L_
+                mx_, my_ = (w[0] + w[2]) / 2.0, (w[1] + w[3]) / 2.0
+                for _x, _y, _n, (rb_, horiz_, longest_) in runs_sp:
+                    if ((horiz_ and hz_) or (not horiz_ and vt_)) and L_ <= 1.2 * longest_ \
+                            and rb_[0] - 30 <= mx_ <= rb_[2] + 30 and rb_[1] - 30 <= my_ <= rb_[3] + 30:
+                        return True
+                return False
+            grid_walls = [w for w in f_walls if not (runs_sp and _is_tread_line(w))]
+            n_treads_out = len(f_walls) - len(grid_walls)
+            stats["spaces_tread_lines_out"] += n_treads_out
+            pieces = _spc.free_pieces(grid_walls + door_lines, floor_poly, blocked + tab_g,
+                                      cell_mm=SPACES_GRID_MM, open_floor_sqm=SPACES_OPEN_FLOOR_SQM,
+                                      min_half_width_mm=SPACES_MIN_HALF_WIDTH_MM, min_sqm=SPACES_MIN_SQM,
+                                      open_floor_share=SPACES_OPEN_FLOOR_SHARE)
+            stats["spaces_pieces"] += pieces["pieces"]
+            stats["spaces_open_floor_sqm"] += round(pieces["open_floor_sqm"], 1)
+            stats["spaces_cavities"] += pieces["cavities"]
+            t_doors = (tracer_with(list(range(first_door_gap, len(retry_gaps))))
+                       if first_door_gap < len(retry_gaps) else tracer)
+
+            def _trace_on(t_):
+                def _f(x_, y_, _t=t_):
+                    tr_ = _trace_with(_t, x_, y_) if _t is not None else None
+                    return [tuple(p[:2]) for p in tr_.polygon] if (tr_ is not None and tr_.ok) else None
+                return _f
+            attempts = [(_trace_on(t_doors), "walls and doors"), (_trace_on(gaps_tracer()), "doorless openings closed")]
+            if not ev:
+                attempts.append((_trace_on(lines_tracer()), "plain lines closed"))
+            spaces_ = []
+            if runs_sp:
+                t_flight = None
+                try:
+                    t_flight = build_tracer(grid_walls) if n_treads_out else tracer
+                    if t_flight is not None and door_lines:
+                        t_flight = t_flight.extended(door_lines)
+                        t_flight = t_flight if t_flight.ok else None
+                except (MemoryError, ValueError, OverflowError):
+                    t_flight = None
+                if t_flight is not None:
+                    run_seeds = [(r_[0], r_[1], 0.0) for r_ in runs_sp if _point_in_polygon(r_[0], r_[1], floor_poly)]
+                    spaces_ = _spc.trace_pieces(run_seeds, [(_trace_on(t_flight), "walls and doors, the flight's treads left out")],
+                                                min_sqm=SPACES_MIN_SQM, min_half_width_mm=SPACES_MIN_HALF_WIDTH_MM)
+                    # a flight's trace that ran out over the floor is no space of its own
+                    spaces_ = [s_ for s_ in spaces_ if s_["g"].area <= STAIR_FOUND_MAX_SQM * 1e6]
+                    stats["spaces_flights_traced"] += len(spaces_)
+            spaces_ += _spc.trace_pieces(pieces["seeds"], attempts, min_sqm=SPACES_MIN_SQM,
+                                         min_half_width_mm=SPACES_MIN_HALF_WIDTH_MM, taken=[s_["g"] for s_ in spaces_])
+            if tab_g:
+                # a shape kept, mapped or deleted in the Geometry tab is the tab's
+                keep_ = []
+                for s_ in spaces_:
+                    if any(s_["g"].intersection(q0).area > 0.5 * s_["g"].area for q0 in tab_g):
+                        stats["spaces_in_tab_shapes"] += 1
+                        continue
+                    keep_.append(s_)
+                spaces_ = keep_
+            # the doors, for the shaft rooms, the pockets and the lobbies
+            door_g, door_w = [], []
+            for q_ in early_doors or []:
+                try:
+                    door_g.append(_SPoly([(p[0], p[1]) for p in q_]).buffer(0))
+                    ax_ = _el_s.door_axes(q_)
+                    door_w.append(ax_[6] if ax_ is not None else 900.0)
+                except Exception:                     # noqa: BLE001
+                    continue
+            strips_g = []
+            for st_ in walls.get("strips") or ():
+                try:
+                    strips_g.append(_SPoly(st_["pts"]).buffer(0))
+                except (ValueError, TypeError, KeyError):
+                    pass
+
+            def _free_text(t):
+                """A text a space may take: not claimed, or one the labels
+                could close no room on (no evidence, no walls) - a lift
+                lobby's name whose open end the lift bank closes."""
+                return (not t["claimed"]) or text_status.get(t.get("sr_no")) in ("no_evidence", "no_walls")
+
+            def _bank_lobbies(lifts_g, others=None, drawn_only=False):
+                """(4) An open lift lobby: the floor between two lift banks
+                facing each other, closed at the banks' ends (rule
+                lift_lobby_to_lift_bank) - on Phase B's bank lines where a
+                lobby's name stands in it (the lines are evidence to the
+                check after drawing), else as the floor between the banks
+                less the walls, the doors found and the spaces traced.
+                Returns the new spaces."""
+                out_ = []
+                if not rule["lift_lobby_to_lift_bank"] or len(lifts_g) < 2:
+                    return out_
+                # drawn_only (after the labels): a space left to the labels is no
+                # room here - the lobby it held is still open floor
+                have_ = ([s_["g"] for s_ in spaces_ if s_.get("drawn") or not drawn_only]
+                         + [g0 for g0 in (others or []) if g0 is not None and not g0.is_empty])
+                for g_, lines_ in _spc.lift_bank_lobbies(lifts_g, strips_g + door_g, have_, floor_poly,
+                                                         gap_mm=SPACES_LOBBY_GAP_MM, min_sqm=SPACES_LOBBY_MIN_SQM):
+                    poly_ = [tuple(p) for p in list(g_.exterior.coords)[:-1]]
+                    seed_ = next((t for t in floor_texts if _free_text(t)
+                                  and _point_in_polygon(t["x"], t["y"], poly_)
+                                  and family_for_label(t["text"], _FAMILY_RULES)["name"] == "Lift Lobby"), None)
+                    g2_ = None
+                    if seed_ is not None:
+                        tr4 = lobby_at_lift_bank(seed_["x"], seed_["y"], seed_)
+                        if tr4 is not None and tr4.ok and len(tr4.polygon) >= 3:
+                            try:
+                                g2_ = _SPoly([tuple(p[:2]) for p in tr4.polygon]).buffer(0)
+                            except (ValueError, TypeError):
+                                g2_ = None
+                    how_ = "closed at the lift banks' ends (on the bank's lines)"
+                    if g2_ is None or g2_.is_empty or g2_.geom_type != "Polygon":
+                        g2_ = g_
+                        how_ = "the floor between two lift banks, closed at their ends"
+                        lobby_bank_lines.extend(lines_)
+                    if any(g2_.intersection(q_).area > 0.5 * min(g2_.area, q_.area) for q_ in have_):
+                        continue
+                    have_.append(g2_)
+                    out_.append({"g": g2_, "how": how_, "lobby": True})
+                    stats["spaces_lift_lobbies"] += 1
+                    stats["lift_lobby_closed_at_bank"] += 1
+                return out_
+            spaces_ += _bank_lobbies(x_lift_g)
+            marks_sp = [_SPt(p[0], p[1]) for p in (job.get("stair_marks") or [])]
+            SHAFT_LIKE_FAMS = ("Shaft", "Plumbing", "Fire / Life Safety")
+
+            def _text_info(t):
+                txt = str(t.get("text") or "")
+                fam_ = family_for_label(txt, _FAMILY_RULES)["name"]
+                skip = None
+                if is_ignorable_label(txt):
+                    skip = "ignored"
+                elif X_TAGS_NEVER_NAME and _x_tag_kind(txt):
+                    skip = "tag"
+                elif _is_plain_tag(txt):
+                    skip = "tag"
+                elif rule["skip_notes"] and is_note_text(txt) and not looks_like_primary(txt):
+                    skip = "note"
+                return {"t": t, "text": txt, "fam": fam_, "skip": skip,
+                        "device": bool(rule["equipment_tags"] and is_device_tag(txt)),
+                        "primary": bool(looks_like_primary(txt)),
+                        "shaft_like": fam_ in SHAFT_LIKE_FAMS or (
+                            bool(shaft_like_label(txt, fam_)) and fam_ in ("Unknown", "MEP / Services")),
+                        "want": t.get("want")}
+
+            def _fits(ti, g_):
+                if not ti.get("want"):
+                    return False
+                b_ = g_.bounds
+                try:
+                    return bool(stated_fits(ti["want"], b_[2] - b_[0], b_[3] - b_[1]))
+                except Exception:                     # noqa: BLE001
+                    return False
+
+            # each space's outline, texts, treads and marks
+            def _prep(s_):
+                s_["poly"] = [tuple(p) for p in list(s_["g"].exterior.coords)[:-1]]
+                s_["bbox"] = tuple(float(v) for v in s_["g"].bounds)
+                s_["inside"] = [_text_info(t) for t in floor_texts
+                                if _free_text(t) and _point_in_polygon(t["x"], t["y"], s_["poly"])]
+                s_["treads"] = _spc.treads_in(s_["g"], runs_sp, segs_arr, _stair_treads)
+                s_["stair_txt"] = [ti for ti in s_["inside"] if not ti["skip"] and ti["fam"] == "Staircase"]
+                s_["mark"] = any(s_["g"].contains(m_) for m_ in marks_sp)
+            for s_ in spaces_:
+                _prep(s_)
+            # the staircases: a flight (STAIR_MIN_TREADS treads) with UP /
+            # DOWN or a stair name in it; a named landing with its flight in
+            # the cell beside it (across the stair core's wall), and that
+            # flight as the other part of it
+            flights = [s_ for s_ in spaces_ if s_["treads"] >= STAIR_MIN_TREADS]
+            for s_ in flights:
+                if s_["stair_txt"] or s_["mark"]:
+                    s_["stair"] = "%d treads and %s" % (s_["treads"], "a stair name" if s_["stair_txt"] else "UP / DOWN in it")
+            for s_ in spaces_:
+                if s_.get("stair") or not s_["stair_txt"]:
+                    continue
+                near = [f_ for f_ in flights if f_ is not s_
+                        and _spc.shares_side(s_["g"], [f_["g"]], side_mm=500.0, gap_mm=STAIR_PART_REACH_MM)]
+                if near:
+                    s_["stair"] = "a stair name, its flight of %d treads in the cell beside it" % near[0]["treads"]
+            for f_ in flights:
+                if f_.get("stair"):
+                    continue
+                named = [s_ for s_ in spaces_ if s_.get("stair") and s_["stair_txt"] and s_ is not f_
+                         and _spc.shares_side(f_["g"], [s_["g"]], side_mm=500.0, gap_mm=STAIR_PART_REACH_MM)]
+                if named:
+                    f_["stair"] = "%d treads: the other part of %s beside it" % (f_["treads"], named[0]["stair_txt"][0]["text"])
+                    f_["part_label"] = named[0]["stair_txt"][0]["text"]
+
+            def _name_space(s_):
+                """The space's name, family and why - the text last. Returns
+                (the text picked or None, the family forced or None, why,
+                options)."""
+                g_ = s_["g"]
+                a_ = g_.area / 1e6
+                inside_ = s_["inside"]
+                if s_.get("stair"):
+                    pick_ = s_["stair_txt"][0] if s_["stair_txt"] else None
+                    return pick_, "Staircase", s_["stair"], {"fallback_label": s_.get("part_label") or "STAIRCASE",
+                                                             "part": bool(s_.get("part_label"))}
+                shafts_ = _spc.shares_side(g_, x_shaft_g, side_mm=SHAFT_ROOM_SIDE_MM) if a_ <= SHAFT_ROOM_MAX_SQM else []
+                door_ = _spc.touches_door(g_, door_g, touch_mm=ROOM_DOOR_TOUCH_MM, widths=door_w) if door_g else False
+                s_["has_door"] = door_
+                if shafts_ and door_:
+                    # the shaft's room, whatever is written in it (2026-10-17)
+                    pick_ = next((ti for ti in inside_ if not ti["skip"] and ti["shaft_like"]), None)
+                    if pick_ is None:
+                        pick_ = next((ti for ti in inside_ if not ti["skip"] and not ti["device"]
+                                      and (ti["fam"] != "Unknown" or ti["primary"])), None)
+                    fallback_ = next((x_label_of.get(id(xg)) for xg in shafts_ if x_label_of.get(id(xg))
+                                      and x_label_of.get(id(xg)) != X_UNKNOWN_LABEL), None)
+                    return pick_, SHAFT_ROOM_FAMILY, "%.1f sq.m along a shaft's X, a door of its own: the shaft's room" % a_, \
+                        {"fallback_label": fallback_ or "SHAFT ROOM", "shaft_room": True}
+                # the texts that can name it: no tag, note or device; a text of
+                # no family only when it reads as a room's name (a level note
+                # does not); a shaft's name in a room over the shaft-room size
+                # is a note about the shaft; a stair name with no flight in or
+                # beside the space is no name (a staircase takes its treads)
+                usable_ = [ti for ti in inside_ if not ti["skip"] and not ti["device"]
+                           and (ti["fam"] != "Unknown" or ti["primary"])]
+                if a_ > SHAFT_ROOM_MAX_SQM:
+                    usable_ = [ti for ti in usable_ if not ti["shaft_like"]]
+                stair_no_flight = [ti for ti in usable_ if ti["fam"] == "Staircase"]
+                if stair_no_flight:
+                    stats["spaces_stair_name_no_flight"] += 1
+                    usable_ = [ti for ti in usable_ if ti["fam"] != "Staircase"]
+                if not usable_:
+                    devices_ = [ti for ti in inside_ if not ti["skip"] and ti["device"]] if a_ <= SHAFT_ROOM_MAX_SQM else []
+                    if devices_ and devices_[0]["shaft_like"]:
+                        return devices_[0], "Shaft", "a shaft tag in a %.1f sq.m space, no door or no shaft X beside it" % a_, {}
+                    if s_.get("lobby"):
+                        return None, "Lift Lobby", "closed at the lift banks' ends, nothing written in it", {"fallback_label": "LIFT LOBBY"}
+                    if stair_no_flight:
+                        return None, None, "a stair name (%s) but no flight of treads in or beside it: not a staircase; " \
+                            "nothing else written in it" % stair_no_flight[0]["text"], {}
+                    return None, None, "nothing written in it", {}
+                pick_ = max(usable_, key=lambda ti: (ti["primary"], _fits(ti, g_), ti["fam"] != "Unknown",
+                                                     label_score(ti["text"], ti["t"].get("height", 0.0), 0.0)))
+                # another room's name in it as well: the trace ran through a
+                # doorless opening - Phase B's leak search splits it from the labels
+                if foreign_labels(s_["poly"], pick_["t"], fill_sqm=a_):
+                    return pick_, None, "holds another room's name", {"contested": True}
+                if pick_["shaft_like"]:
+                    return pick_, "Shaft", "a shaft name in a %.1f sq.m space, %s" % (
+                        a_, "no shaft X beside it" if not shafts_ else "no door of its own"), {}
+                if pick_["fam"] == "Unknown":
+                    return pick_, None, "named by a text of no family", {}
+                return pick_, None, "named by its text (%s)" % pick_["fam"], {}
+
+            # name each space, claim its texts, draw it; what became of every
+            # space is logged (stats spaces_by_floor)
+            space_log = spaces_log_out
+
+            def _log_space(s_, fate_, label_=None, fam_=None, why_=None):
+                b_ = s_["g"].bounds
+                space_log.append({"fate": fate_, "label": (" ".join(str(label_).split()) if label_ else None),
+                                  "family": fam_, "sqm": round(s_["g"].area / 1e6, 2), "how": s_.get("how"),
+                                  "why": why_, "at": [round((b_[0] + b_[2]) / 2.0), round((b_[1] + b_[3]) / 2.0)],
+                                  "texts": [ti["text"][:40] for ti in (s_.get("inside") or [])][:6]})
+
+            def _draw_space(s_):
+                g_ = s_["g"]
+                pick_, fam_forced, why_, opts_ = _name_space(s_)
+                if opts_.get("contested"):
+                    stats["spaces_contested"] += 1
+                    _log_space(s_, "left to the labels (holds two rooms' names)", pick_["text"] if pick_ else None, None, why_)
+                    return
+                inside_ = s_.get("inside") or []
+                has_text_ = any(not ti["skip"] for ti in inside_)
+                if pick_ is None and fam_forced is None and not opts_.get("fallback_label"):
+                    if _spc.is_pocket(g_, floor_poly, has_text_, s_.get("has_door", False),
+                                      pocket_max_sqm=SPACES_POCKET_MAX_SQM, edge_pocket_max_sqm=SPACES_EDGE_POCKET_MAX_SQM):
+                        stats["spaces_pockets"] += 1
+                        _log_space(s_, "pocket, not drawn", None, None, why_)
+                        return
+                    if not SPACES_DRAW_UNNAMED:
+                        _log_space(s_, "no name, not drawn", None, None, why_)
+                        return
+                    label_, fam_forced = SPACES_UNNAMED_LABEL, "Unknown"
+                    stats["spaces_unnamed"] += 1
+                    if s_["treads"] >= STAIR_MIN_TREADS:
+                        why_ = "a flight of %d treads, no UP / DOWN and no stair name in or beside it" % s_["treads"]
+                elif pick_ is None:
+                    label_ = opts_.get("fallback_label") or (fam_forced or "").upper()
+                else:
+                    label_ = pick_["text"]
+                    stats["spaces_named"] += 1
+                if fam_forced == "Staircase":
+                    stats["spaces_staircases"] += 1
+                    if opts_.get("part"):
+                        stats["geometry_staircase_parts"] += 1
+                elif opts_.get("shaft_room"):
+                    stats["spaces_shaft_rooms"] += 1
+                elif fam_forced == "Shaft":
+                    stats["spaces_shaft_by_text"] += 1
+                pt_ = g_.representative_point()
+                d_ = {"bbox": s_["bbox"], "poly": s_["poly"],
+                      "holes": [[tuple(p) for p in list(r_.coords)[:-1]] for r_ in g_.interiors if len(r_.coords) >= 4],
+                      "label": label_, "height": (pick_["t"].get("height", 0.0) if pick_ else 0.0),
+                      "source": "P", "cx": float(pt_.x), "cy": float(pt_.y),
+                      "sr_no": (pick_["t"].get("sr_no") if pick_ else None), "absorbed_srs": [],
+                      "want": (pick_.get("want") if pick_ else None), "space": True,
+                      "evidence": ["traced as an enclosed space (%s)" % s_["how"], why_]}
+                if fam_forced:
+                    d_["family_forced"] = fam_forced
+                if opts_.get("shaft_room"):
+                    d_["shaft_room"] = True
+                for ti in inside_:
+                    t = ti["t"]
+                    t["claimed"] = True
+                    if t.get("sr_no") is None:
+                        continue
+                    if t["sr_no"] in ev_rejected:
+                        # a label the labels' trace could close no room on: the space closes it
+                        ev_rejected.discard(t["sr_no"])
+                        stats["no_evidence_boundaries"] -= 1
+                    if pick_ is not None and t is pick_["t"]:
+                        text_status[t["sr_no"]] = "primary"
+                    else:
+                        text_status[t["sr_no"]] = "absorbed"
+                        d_["absorbed_srs"].append(t["sr_no"])
+                drawn.append(d_)
+                s_["drawn"] = True
+                stats["spaces_traced"] += 1
+                _log_space(s_, "drawn", label_, fam_forced or family_for_label(label_, _FAMILY_RULES)["name"], why_)
+                spaces_items_out.append((space_log[-1], d_))
+            for s_ in list(spaces_):
+                _draw_space(s_)
+            # (4) again, with the lifts the texts named (a bank traced from its
+            # labels, no X on the lifts - Aquila): the open lobby between two
+            # such banks, closed at their ends
+            lift_named = [g0 for g0 in (_merged_geom(d0) for d0 in drawn
+                                        if d0.get("space") and not d0.get("family_forced")
+                                        and family_for_label(d0.get("label") or "", _FAMILY_RULES)["name"] == "Lift")
+                          if g0 is not None and not g0.is_empty]
+            if lift_named:
+                more_ = _bank_lobbies(x_lift_g + lift_named)
+                for s_ in more_:
+                    _prep(s_)
+                    spaces_.append(s_)
+                    _draw_space(s_)
+            stats["primary_boundaries"] += stats.get("spaces_named", 0)
+            spaces_ready = True
+        except Exception:                             # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).exception("rooms from spaces on %s", floor_name)
+        _tick("05b spaces traced and named (text last)")
     # -- Phase B: primary labels --
     # Every candidate is resolved before any of them claims, and the
     # tightest enclosure goes first. Claiming in reading order was safe
@@ -11576,6 +12131,37 @@ def _floor_pass_rules(job):
     # whose text position is closest to the union-rectangle center.
     # Each "drawn" entry tracks the sr_no(s) it represents so we can
     # report per-text status to the UI.
+    # (4) the lift lobby between two banks the labels traced (rule
+    # rooms_from_spaces; no X on the lifts, the lifts' names traced them in
+    # Phase B - Aquila): the open lobby between the banks is the floor
+    # between them, closed at the banks' ends, and takes a lobby name the
+    # labels could close no room on (its open side is the bank's).
+    if spaces_ready and rule["lift_lobby_to_lift_bank"]:
+        try:
+            other_rooms = []
+            lifts_all = list(x_lift_g)
+            for d0 in drawn:
+                if d0.get("source") not in ("P", "S") or d0.get("space"):
+                    continue
+                g0 = _merged_geom(d0)
+                if g0 is None or g0.is_empty:
+                    continue
+                if not d0.get("family_forced") and family_for_label(d0.get("label") or "", _FAMILY_RULES)["name"] == "Lift":
+                    lifts_all.append(g0)
+                else:
+                    other_rooms.append(g0)
+            lifts_all += [g0 for g0 in (_merged_geom(d0) for d0 in drawn if d0.get("space") and not d0.get("family_forced")
+                                        and family_for_label(d0.get("label") or "", _FAMILY_RULES)["name"] == "Lift")
+                          if g0 is not None and not g0.is_empty]
+            if len(lifts_all) >= 2:
+                for s_ in _bank_lobbies(lifts_all, others=other_rooms, drawn_only=True):
+                    _prep(s_)
+                    spaces_.append(s_)
+                    _draw_space(s_)
+                    stats["spaces_lift_lobbies_after_labels"] += 1
+        except Exception:                             # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).exception("lift bank lobbies after the labels on %s", floor_name)
     merged = list(drawn); changed = rule["merge_overlaps"]
     while changed:
         changed = False; i = 0
@@ -12143,8 +12729,11 @@ def _floor_pass_rules(job):
                    for g in deleted_shapes if g.get("bbox")):
                 continue
             def _covers(d):
+                # a space traced (rule rooms_from_spaces) decided its flight
+                # already: a staircase with UP / DOWN or a name in it, else not
                 fam = d.get("family_forced") or family_for_label(d["label"], _FAMILY_RULES)["name"]
-                return _inside_boundary(d, sx, sy) and (fam == "Staircase" or d.get("source") in ("X", "V"))
+                return _inside_boundary(d, sx, sy) and (fam == "Staircase" or d.get("source") in ("X", "V")
+                                                        or d.get("space"))
             if any(_covers(d) for d in merged):
                 continue
             pseudo = {"text": "STAIRCASE", "sr_no": None, "x": sx, "y": sy, "want": None}
@@ -12491,59 +13080,12 @@ def _floor_pass_rules(job):
 
     _tick("09 outlines settled (straighten, overlaps, guardrail, stated size)")
     # A shaft is the compartment its X stands in, traced from the X like a
-    # room (rule shaft_compartment): see shaft_compartments below.
-    shaft_review = []
-    shaft_notes = {}
+    # room (rule shaft_compartment): see shaft_compartments below. Under
+    # rule rooms_from_spaces the X marks were traced before the rooms (the
+    # stage above); an X seen there is skipped here.
     if rule["shaft_compartment"] and tracer is not None:
         try:
-            def _shaft_tracer():
-                """Every opening closed - the doors too - and the plain lines
-                of the drawing (a partition line between a shaft and its
-                room) as walls."""
-                never = [k.upper() for k in _HARD_EXCLUDE_KEYWORDS]
-                skip_words = [k.upper() for k in _WALL_EXCLUDE_KEYWORDS]
-                plain = []
-                for sg in raw_segs:
-                    lu = (sg[4] or "").upper()
-                    if (any(k in lu for k in never) or any(k in lu for k in skip_words)
-                            or _is_fixture_layer(lu) or (len(sg) > 7 and sg[7])
-                            or _other_level_xref(lu)
-                            or (x_lines and _seg_key(sg) in x_lines)
-                            or sg[5] < 50.0):
-                        continue
-                    plain.append((sg[0], sg[1], sg[2], sg[3]))
-                # on the walls as drawn (faces, caps, hatch edges, slit and
-                # doorway closers) - not on the X outlines settled as walls
-                # for the rooms, which would close every trace at the X
-                closers = (list(door_closing) + list(threshold) + list(gap_closing) + list(slits) +
-                           list(face_closers) + list(retry_gaps))
-                if closers:
-                    # a doorway or gap closer never runs through an X: a
-                    # shaft's door is on its side (XA: a lift's door line
-                    # carried 1.9 m on through SPARE SH cut 85 mm off it)
-                    from shapely.geometry import box as _xb, LineString as _xl
-                    from shapely.strtree import STRtree as _xst
-                    xin = []
-                    for d0 in merged:
-                        if d0.get("source") != "X":
-                            continue
-                        for r0 in (d0.get("xrects") or [d0.get("bbox")]):
-                            if r0 and r0[2] - r0[0] > 100.0 and r0[3] - r0[1] > 100.0:
-                                xin.append(_xb(r0[0] + 30.0, r0[1] + 30.0, r0[2] - 30.0, r0[3] - 30.0))
-                    if xin:
-                        xt_ = _xst(xin)
-                        kept_ = []
-                        for c0 in closers:
-                            ln = _xl([(c0[0], c0[1]), (c0[2], c0[3])])
-                            if any(xin[k].intersection(ln).length > 50.0 for k in xt_.query(ln)):
-                                stats["closers_through_x_dropped"] += 1
-                                continue
-                            kept_.append(c0)
-                        closers = kept_
-                return build_tracer(list(faces) + list(caps) + closers +
-                                    list(edges) + list(hatch_lines) +
-                                    plain + list(x_frame_segs))
-            shaft_compartments(merged, _shaft_tracer, raw_segs, floor_poly, stats, shaft_review,
+            shaft_compartments(merged, _shaft_tracer_on(merged), raw_segs, floor_poly, stats, shaft_review,
                                shaft_notes, floor_family_overrides, family_rules=_FAMILY_RULES)
         except Exception:                             # noqa: BLE001
             import logging
@@ -12926,6 +13468,16 @@ def _floor_pass_rules(job):
                 where = "beside it"
             label_notes[sr] = "room traced; X {0} kept as shaft ({1})".format(where, why)
 
+    # what the later passes made of the spaces (merges, overlaps, the rooms
+    # in the wall mass, the families set from what is drawn in them)
+    alive_ = {id(m_) for m_ in merged}
+    for e_, d_ in spaces_items_out:
+        if id(d_) not in alive_:
+            e_["fate"] = "drawn, then dropped by a later pass (inside the wall mass, or another boundary took its place)"
+        elif d_.get("family_forced") and e_.get("family") != d_.get("family_forced"):
+            e_["fate"] = "drawn (family set later from what is drawn in it: %s)" % d_["family_forced"]
+            e_["family"] = d_["family_forced"]
+
     return {"merged": merged, "text_status": text_status,
             "label_notes": label_notes,
             "wall_exclusions": wall_exclusions, "grown": grown,
@@ -12948,6 +13500,7 @@ def _floor_pass_rules(job):
             "glass": glass_out,
             "timings": timings,
             "locked": LM.report(),
+            "spaces": spaces_log_out,
             "traced": tracer is not None}
 
 
@@ -13817,6 +14370,8 @@ def _floor_job(prep, floor, rows, rule, geometry=None, geometry_only=False, fami
             "column_rejects": ((prep.get("columns") or {}).get("rejects") or {}).get(floor["name"]) or [],
             "fixtures": [f for f in fixtures
                          if box[0] <= f[0] <= box[2] and box[1] <= f[1] <= box[3]],
+            "stair_marks": [p for p in (prep.get("stair_marks") or [])
+                            if box[0] <= p[0] <= box[2] and box[1] <= p[1] <= box[3]],
             "detection_mode": detection_mode,
             "family_overrides": {floor["name"]:
                                  (family_overrides or {}).get(floor["name"]) or {}},
@@ -13983,6 +14538,7 @@ def _merge_rotated_pass(res, sub, core_pts, rows_in):
     res["doors"] = pick("doors", res, keep) + pick("doors", sub, take)
     # the lines closing a lift lobby at its bank: evidence for either part
     res["lobby_bank_lines"] = list(res.get("lobby_bank_lines") or []) + list(sub.get("lobby_bank_lines") or [])
+    res["spaces"] = list(res.get("spaces") or []) + list(sub.get("spaces") or [])
     for key in ("door_review", "shaft_review"):
         res[key] = [r_ for r_ in (res.get(key) or []) if not ring_inside(r_.get("pts") or [])] + \
                    [r_ for r_ in (sub.get(key) or []) if ring_inside(r_.get("pts") or [])]
@@ -14337,6 +14893,8 @@ def annotate_dxf(src_path, dst_path, floors, results, family_overrides=None,
             stats.setdefault("x_placement", {})[floor_name] = res["x_placement"]
         if res.get("locked"):
             stats.setdefault("locked_by_floor", {})[floor_name] = res["locked"]
+        if res.get("spaces"):
+            stats.setdefault("spaces_by_floor", {})[floor_name] = res["spaces"]
         stats.setdefault("label_notes_by_floor", {})[floor_name] = {
             str(k): v for k, v in (res.get("label_notes") or {}).items()}
         stats.setdefault("stated_grown", []).extend(
@@ -15683,7 +16241,7 @@ def reload_family_rules():
     """
     global _FAMILY_RULES, _LABEL_RULES, _FLOOR_USAGES, _DEFAULT_USAGE
     _FAMILY_RULES = _load_family_rules()
-    _LABEL_RULES = build_rules(CONFIG, _FAMILY_RULES)
+    _LABEL_RULES = build_rules(CONFIG, _FAMILY_RULES, ignore_words=_FAMILY_IGNORE_WORDS)
     _FLOOR_USAGES, _DEFAULT_USAGE = _load_floor_usages()
     _FAMILY_OF_CACHE.clear()
     return _FAMILY_RULES
@@ -15847,6 +16405,10 @@ def _load_family_rules(rules_path=None):
         )
         return [dict(f) for f in _DEFAULT_FAMILY_RULES]
 
+    # the family library's ignore words (2026-10-17): texts that are only
+    # such a word never name a room (labels.LabelRules)
+    global _FAMILY_IGNORE_WORDS
+    _FAMILY_IGNORE_WORDS = [str(w).strip().upper() for w in (data.get("ignore_words") or []) if str(w).strip()]
     out = []
     for fam in data.get("families", []):
         name = (fam.get("name") or "").strip()
@@ -15870,7 +16432,10 @@ def _load_family_rules(rules_path=None):
             continue
         out.append({"name": name, "layer": layer, "color": color, "keywords": kws,
                     "usages": _clean_usages(fam.get("usages")),
-                    "precedence": _clean_precedence(fam.get("precedence"))})
+                    "precedence": _clean_precedence(fam.get("precedence")),
+                    # words that are evidence for the family, never a name
+                    # (Staircase: UP, DOWN, DN - rule rooms_from_spaces)
+                    "evidence": [str(w).strip().upper() for w in (fam.get("evidence_words") or []) if str(w).strip()]})
 
     if not out:
         print(
@@ -16101,8 +16666,9 @@ _DEFAULT_FAMILY_RULES = [
 
 
 # Load the rules once at import time. Reload by restarting the app.
+_FAMILY_IGNORE_WORDS = []          # set by _load_family_rules (family_rules.json "ignore_words")
 _FAMILY_RULES = _load_family_rules()
-_LABEL_RULES = build_rules(CONFIG, _FAMILY_RULES)
+_LABEL_RULES = build_rules(CONFIG, _FAMILY_RULES, ignore_words=_FAMILY_IGNORE_WORDS)
 _FLOOR_USAGES, _DEFAULT_USAGE = _load_floor_usages()
 
 

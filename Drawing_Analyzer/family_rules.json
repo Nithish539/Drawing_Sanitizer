@@ -78,12 +78,20 @@
     }
   ],
   "default_usage": "Office",
+  "_ignore_words_note": "Texts that are only one of these words never name a room (2026-10-17): SLOPE on a ramp took a 16 sq.m space as a Parking room. Whole-word, case-free; a word inside a longer name is not ignored.",
+  "ignore_words": [
+    "SLOPE"
+  ],
   "families": [
     {
       "name": "Shaft",
       "layer": "SHAFT",
       "color": 1,
       "keywords": [
+        "KITCHEN EXHAUST",
+        "LCS",
+        "STAIR PRE",
+        "STAIR PRES",
         "PL SH",
         "PL-SH",
         "EL ELE",
@@ -256,7 +264,13 @@
         "STR-",
         "STR"
       ],
-      "precedence": "geometry"
+      "precedence": "geometry",
+      "evidence_words": [
+        "UP",
+        "DOWN",
+        "DN"
+      ],
+      "_evidence_note": "A space is a staircase when it holds a flight of 7 or more treads AND one of these words or a Staircase keyword is written in it (rule rooms_from_spaces). The words are read from the drawing as evidence; they never name a room."
     },
     {
       "name": "Fire / Life Safety",
