@@ -881,6 +881,21 @@ RULES = [
         "default": True,
     },
     {
+        "key": "walls_before_spaces",
+        "group": "walls",
+        "title": "Walls built in full before the spaces are traced (W2 first, W3 on the rooms)",
+        "detail": "The sequence 1, 5, 2, W2, 5a, 4, 5b ... W3, 12 (2026-10-17): once the X marks "
+                  "are decided and the doors found, the wall mass is built in full (the paired "
+                  "faces and the wall hatches, columns and door openings cut out, never over a "
+                  "shaft, a lift, a void or a loose cut-out) before any space is traced; the mass "
+                  "is a wall to the room tracer and no space to the grid, so no space is ever "
+                  "traced inside a wall core. The walls are built once more on the rooms "
+                  "afterwards (pass 11, W3: the revalidation - the strips rooms grew over, balcony "
+                  "parapets and columns in rooms taken out). Off: the walls are built once, after "
+                  "the rooms.",
+        "default": True,
+    },
+    {
         "key": "merge_overlaps",
         "group": "guards",
         "title": "Merge boundaries that sit on top of each other",

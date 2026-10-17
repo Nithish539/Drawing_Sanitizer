@@ -55,6 +55,16 @@ class FreePiecesTests(unittest.TestCase):
             self.assertTrue(A.contains(Point(x, y)) or B.contains(Point(x, y)), (x, y))
             self.assertTrue(15 < a < 20, a)
 
+    def test_the_hole_in_a_blocked_polygon_is_a_space(self):
+        # a wall mass round a cell (walls_before_spaces): the cell it
+        # encloses is free floor, one seed inside it
+        block = box(5000, 5000, 11000, 11000).difference(box(6000, 6000, 10000, 10000))
+        r = sp.free_pieces([], PLATE, [block], cell_mm=50, open_floor_sqm=100)
+        self.assertEqual(len(r["seeds"]), 1, r)
+        x, y, a = r["seeds"][0]
+        self.assertTrue(box(6000, 6000, 10000, 10000).contains(Point(x, y)), (x, y))
+        self.assertTrue(14 < a < 16.5, a)
+
     def test_a_small_plates_open_floor_by_its_share(self):
         # a 12 x 12 m plate with one 4 x 5 room: the rest is under 1000 sq.m
         # and the open floor all the same (half the free floor)

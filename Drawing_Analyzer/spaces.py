@@ -90,8 +90,13 @@ def free_pieces(wall_lines, plate_pts, blocked, cell_mm=50.0, open_floor_sqm=100
         if i1 <= i0 or j1 <= j0:
             continue
         sub = np.column_stack([XX[j0:j1, i0:i1].ravel(), YY[j0:j1, i0:i1].ravel()])
-        m = MPath(list(g.exterior.coords)).contains_points(sub).reshape(j1 - j0, i1 - i0)
-        free[j0:j1, i0:i1] &= ~m
+        m = MPath(list(g.exterior.coords)).contains_points(sub)
+        # a hole in a blocked polygon is free floor: the cell a wall mass
+        # encloses (a stair core, a walled room with no door) is a space
+        for ring in g.interiors:
+            if len(ring.coords) >= 4:
+                m &= ~MPath(list(ring.coords)).contains_points(sub)
+        free[j0:j1, i0:i1] &= ~m.reshape(j1 - j0, i1 - i0)
     lab, ncomp = ndimage.label(free)
     if ncomp == 0:
         return {"seeds": [], "open_floor_sqm": 0.0, "cavities": 0, "tiny": 0, "pieces": 0}

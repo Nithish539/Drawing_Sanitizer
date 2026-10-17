@@ -2127,3 +2127,19 @@ Library and config: `family_rules.json` `ignore_words` ["SLOPE"], Staircase `evi
 ### Files
 
 `spaces.py` (new), `dxf_reader.py` (the stage, `_collect_stair_marks`, `_shaft_tracer_on`, `lobby_at_lift_bank` lifts by text, pass 07 skips flights in a traced space, `spaces_by_floor`), `labels.py` (ignore words, the remark tier), `rules.py` (`rooms_from_spaces`), `family_rules.json`, `config.json`; tests: `test_spaces.py` (new, 16 tests), `test_walls.py` (two stair tags with no flight: both absorbed). 861 tests pass. Outputs: `Final_Outputs_2026-10-17_RoomsFromSpaces`. Backup: `_backup_2026-10-17_rooms_from_spaces_delivered` - the code as delivered; no copy was taken before this change was edited in (the previous rollback point is `_backup_2026-10-17_before_boundary_rule`; the rule off gives the old order on today's code).
+
+## 2026-10-17 (last) — the walls built in full before the spaces are traced (sequence 1, 5, 2, W2, 5a, 4, 5b, 6, 7, 9, 10, W3, 12)
+
+Rule **`walls_before_spaces`** (group walls, **on by default**). After the X decision and the shafts' compartments, before any space is traced, the wall mass is built in full (`wall_polygons` on the early wall trace: the paired faces and the wall hatches, columns and door openings cut out, never over a shaft, a lift, a void or a loose cut-out - `LockedMask`). Its rings are walls to the room tracer and its area is occupied in the grid, so no space is ever traced inside a wall core; the cell a wall mass encloses (a stair core, a walled room) stays free floor - `spaces.free_pieces` now takes the interior rings of a blocked polygon out of the occupied cells (it read the exterior only, which made an enclosed landing or a doorless room disappear). Pass 11 builds the walls once more on the rooms (W3, the revalidation: the strips rooms grew over, balcony parapets and columns in rooms taken out), then A3 fills the wall gaps. Swapping steps 2 and 5 (doors after the X decision) is neutral: neither reads the other's result - the lifts' own doors found right after the X decision is the next step this makes possible.
+
+Simulated first with the rule off by default (P285 11th, BHUB 1st, Aquila 2nd: `Final_Outputs_2026-10-17_WallsBeforeSpaces_Simulation`), then made the default and run again on the three floors.
+
+### What changed (old order → new default)
+
+- **Statements identical** on all three floors: BHUB every category (gross 2471.10); Aquila H.TOILET 4.71 → 4.70; P285 MEN TOILET 61.58 → 61.59. X marks 81/81, 43/43, 57/57 the same class; doors 60 / 47 / 111; AI_WALL identical (101.33 / 84.19 / 129.07 sq.m).
+- **Inside the pass**: grid pieces 507 → 336 (BHUB), 351 → 216 (Aquila), 272 → 144 (P285); wall cavities 399 → 236, 301 → 173, 197 → 76; spaces traced inside the wall mass and dropped later 7 / 3 / 5 → 1 / 0 / 0; spaces with nothing written 9 / 5 / 6 → 2 / 2 / 2; named, shaft rooms, staircases, contested unchanged (15 / 6 / 2 / 3, 21 / 6 / 3 / 3, 37 / 9-10 / 4 / 3).
+- Cost: pass 05w 0.6-1.1 s a floor; pass 11 does the same work as before (it re-uses the early wall trace).
+
+### Files
+
+`dxf_reader.py` (the block after pass 05a, `_tick("05w …")`; pass 11 ticked as W3), `spaces.py` (holes of blocked polygons), `rules.py`, `tests/test_rules.py`, `tests/test_spaces.py` (the hole test). 862 tests pass. Backup: `_backup_2026-10-17_before_walls_before_spaces`.

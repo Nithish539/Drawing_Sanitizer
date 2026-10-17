@@ -11531,6 +11531,48 @@ def _floor_pass_rules(job):
                     leak_tracers.clear()
                     stats["spaces_compartments_as_walls"] += len(grown)
                 _tick("05a shaft compartments (before the rooms)")
+            # Rule walls_before_spaces (2026-10-17; the sequence 1, 5, 2, W2,
+            # 5a, 4, 5b ... W3, 12): the walls built in full before any space
+            # is traced - the mass between the paired faces and the wall
+            # hatches, columns and door openings cut out, never over an X the
+            # sequence decided (LockedMask). Its rings are walls to the room
+            # tracer and no space to the grid, so no space is traced inside a
+            # wall core; pass 11 builds the walls once more on the rooms (W3,
+            # the revalidation). Simulated first on P285 11th, BHUB 1st and
+            # Aquila 2nd: statements identical, the grid's pieces halved.
+            mass_early = []
+            if rule["walls_before_spaces"]:
+                try:
+                    strips_e = (early_wt["strips"] if early_wt is not None else walls.get("strips")) or []
+                    openings_e = [w["poly"] for w in windows + cutouts if w.get("in_wall", True)]
+                    doors_e = [[[float(x), float(y)] for x, y in q] for q in (early_doors or [])]
+                    wcounts_e = {}
+                    pieces_e, _rep_e = wall_polygons(
+                        strips_e, floor_poly, ([] if early_wt is not None else job.get("wall_hatches")),
+                        job.get("columns") or [], ([] if OPENINGS_IN_WALLS else openings_e), doors_e,
+                        list(job.get("column_rejects") or []) + (openings_e if OPENINGS_IN_WALLS else []),
+                        bridge=(openings_e if OPENINGS_IN_WALLS else []), counts=wcounts_e,
+                        locked=(LM.union(LOCKED_NEVER_WALL) if ep else None))
+                    mass_early = [p for p in (pieces_e.get(LN.WALL) or [])
+                                  if p is not None and not p.is_empty and p.area > 0]
+                    if mass_early:
+                        edges_e = []
+                        for p in mass_early:
+                            for ring in [p.exterior] + list(p.interiors):
+                                edges_e.extend(_polygon_edges([tuple(c) for c in list(ring.coords)[:-1]]))
+                        f_walls = f_walls + edges_e
+                        wall_idx = BandIndex(f_walls, band=INDEX_BAND, axis_ratio=WALL_AXIS_RATIO)
+                        tracer = build_tracer(f_walls)
+                        for cache_ in (closed_tracer, lines_tracer_box, base_box):
+                            del cache_[:]
+                        leak_tracers.clear()
+                        stats["walls_before_spaces_pieces"] += len(mass_early)
+                        stats["walls_before_spaces_sqm"] += round(sum(p.area for p in mass_early) / 1e6, 2)
+                        stats["walls_before_spaces_edges"] += len(edges_e)
+                except Exception:                     # noqa: BLE001
+                    import logging
+                    logging.getLogger(__name__).exception("walls before the spaces on %s", floor_name)
+                _tick("05w walls W2 built before the spaces (the mass as walls)")
             if tracer is None:
                 raise RuntimeError("no tracer once the compartments were added")
             # what no space is: the X cells, the voids, the loose cut-outs,
@@ -11591,7 +11633,7 @@ def _floor_pass_rules(job):
             grid_walls = [w for w in f_walls if not (runs_sp and _is_tread_line(w))]
             n_treads_out = len(f_walls) - len(grid_walls)
             stats["spaces_tread_lines_out"] += n_treads_out
-            pieces = _spc.free_pieces(grid_walls + door_lines, floor_poly, blocked + tab_g,
+            pieces = _spc.free_pieces(grid_walls + door_lines, floor_poly, blocked + tab_g + mass_early,
                                       cell_mm=SPACES_GRID_MM, open_floor_sqm=SPACES_OPEN_FLOOR_SQM,
                                       min_half_width_mm=SPACES_MIN_HALF_WIDTH_MM, min_sqm=SPACES_MIN_SQM,
                                       open_floor_share=SPACES_OPEN_FLOOR_SHARE)
@@ -13334,7 +13376,7 @@ def _floor_pass_rules(job):
             import logging
             logging.getLogger(__name__).exception("walls for %s", floor_name)
 
-    _tick("11 walls W2 (walltrace, doors, windows, glass, balcony, columns)")
+    _tick("11 walls rebuilt on the rooms (W3; doors, windows, glass, balcony, columns)")
     # A shaft's room runs to its door: an X-marked cut-out at the back of a
     # walled shaft cell (P285: TEN, COMM, FAPA, the TEN shafts below the lift
     # lobby) is the shaft's slab opening; the space in front of it, up to
