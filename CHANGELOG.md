@@ -2143,3 +2143,34 @@ Simulated first with the rule off by default (P285 11th, BHUB 1st, Aquila 2nd: `
 ### Files
 
 `dxf_reader.py` (the block after pass 05a, `_tick("05w …")`; pass 11 ticked as W3), `spaces.py` (holes of blocked polygons), `rules.py`, `tests/test_rules.py`, `tests/test_spaces.py` (the hole test). 862 tests pass. Backup: `_backup_2026-10-17_before_walls_before_spaces`.
+
+## 2026-10-17 (evening) — a shaft's name inside a room is a note, not a competing room; BHUB checked against the manual sheet
+
+Checking the four BHUB Tower 1 drawings against the client's manual sheet (`Area Statement Sales.xlsx`, sheet `BHUB T-1`) showed a 31 sq.m MALE TOILET on the refuge floors drawn as nothing: the space held the text "PHE-SHAFT 3260X1270" (the shaft's label standing in the toilet), `foreign_labels` counted it as another room's name, the space was left to the labels, and the label's own trace could close it on no evidence. Two changes in the rooms-from-spaces stage (`dxf_reader._floor_pass_rules`):
+
+- **Shaft-likeness** is one definition for the stage: the Shaft or Plumbing family, or a text of no family, of MEP / Services or of Fire / Life Safety that `shaft_like_label` reads as a shaft's name (FHC, FAPA, TEN, STAIR PRES, PHE-SHAFT ...). Never a whole family - a refuge area is Fire / Life Safety too, and for a moment it was treated as a shaft's note and the 75.88 sq.m REFUGE BALCONY vanished - and never a lift's or a room's name (a LIFT WELL label on a room with doors is still refused as before).
+- **A space holding two rooms' names** is left to the labels only when the second name is not shaft-like: a shaft's name written in a room is a note about the shaft (the X is its own cell already), not a room competing for the space.
+
+### What changed
+
+- **BHUB refuge floors (20/24/28)** - toilets 79.32 → 110.51 (sheet 110.88), refuge 150.52 kept; the floor's cells within 1 % / 0.3 sq.m against the sheet 16 → 17 of 25.
+- **Aquila 2nd** - the second AHU ROOM is back (1.79 → 30.74, the two AHU rooms now 30.74 each); the two 1.21 sq.m duct cells beside them (STAIR PRES, AHU SHAFT), cut off from the AHU by a plain line only, are inside the AHU rooms now (shaft room 8.99 → 6.57) - the plain-line case on the open list.
+- **BHUB 1st, P285 11th** - statements unchanged (spaces left to the labels 3 → 1 on BHUB).
+- 862 tests pass.
+
+### BHUB Tower 1 against the manual sheet (`Final_Outputs_2026-10-17_RoomsFromSpaces/BHUB Tower 1 - area statement vs manual sheet (4 drawings).pdf`, + xlsx / txt)
+
+Each of the four drawings (`BHUB floors/`) run from the DXF - plate nearest the sheet's gross, texts, Step 3, Step 6 - and compared column by column with its sheet row(s); a cell is right within 1 % or 0.3 sq.m (the 14-Oct rule).
+
+| drawing | sheet row(s) | cells ok | key totals ok | still off |
+|---|---|---|---|---|
+| first floor (lower zone) | 1st | 20 / 24 | 5 / 7 | toilets −1.26, AHU −0.74, BMS −0.39 (naming), total shafts +0.37 (voids / unnamed cut-outs the sheet has no column for) |
+| 4 floor refugee floor | 4th | 20 / 26 | 7 / 8 | the six upper-zone lift wells pass this floor with no door: rule `lift_without_door_mechanical` files them as machine room (42.12), the sheet keeps them under lift shaft (98.31); gross polyline 2480.07 vs the sheet's 2471.10; plinth / saleable follow |
+| 19 floor (upper zone) | 19th | 18 / 24 | 5 / 7 | lift lobby 39.34 vs 78.28 (the sheet repeats the lower-zone figure on floors 18-29), PHE / ELECT / BMS naming, total shafts +1.00 |
+| 20,24&28 refuge floors | 20th = 24th = 28th | 17 / 25 | 5 / 8 | lift lobby and balcony (the same sheet convention), ELE ROOM 8.21 vs 10.49 (as on 14 Oct), PHE / ELECT / BMS naming |
+
+Every cell still off is a sheet convention, a shaft-naming difference, or a room-trace difference under 1.3 sq.m. The 5-Oct system-generated statement is not used as a reference any more.
+
+### Files
+
+`dxf_reader.py`. Scratch tools (not in the code base): `run_dxf.py` (a DXF through the whole flow), `manual_report.py`, `stepbook2.py` (the new sequence step by step on BHUB 1st: `BHUB 1st Floor/BHUB_FIRST_FLOOR - new sequence step by step.pdf`).

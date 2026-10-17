@@ -11744,7 +11744,14 @@ def _floor_pass_rules(job):
                 return out_
             spaces_ += _bank_lobbies(x_lift_g)
             marks_sp = [_SPt(p[0], p[1]) for p in (job.get("stair_marks") or [])]
-            SHAFT_LIKE_FAMS = ("Shaft", "Plumbing", "Fire / Life Safety")
+            def _shaft_like(txt, fam_):
+                # a shaft's name: the Shaft / Plumbing families, or a text of no
+                # family, of MEP or of Fire / Life Safety that shaft_like_label
+                # reads as one (FHC, FAPA, TEN, STAIR PRES, PHE-SHAFT ...) -
+                # never a whole family (a refuge area is Fire / Life Safety
+                # too) and never a lift's or a room's name
+                return fam_ in ("Shaft", "Plumbing") or (
+                    fam_ in ("Unknown", "MEP / Services", "Fire / Life Safety") and bool(shaft_like_label(txt, fam_)))
 
             def _text_info(t):
                 txt = str(t.get("text") or "")
@@ -11761,8 +11768,7 @@ def _floor_pass_rules(job):
                 return {"t": t, "text": txt, "fam": fam_, "skip": skip,
                         "device": bool(rule["equipment_tags"] and is_device_tag(txt)),
                         "primary": bool(looks_like_primary(txt)),
-                        "shaft_like": fam_ in SHAFT_LIKE_FAMS or (
-                            bool(shaft_like_label(txt, fam_)) and fam_ in ("Unknown", "MEP / Services")),
+                        "shaft_like": _shaft_like(txt, fam_),
                         "want": t.get("want")}
 
             def _fits(ti, g_):
@@ -11859,9 +11865,15 @@ def _floor_pass_rules(job):
                 pick_ = max(usable_, key=lambda ti: (ti["primary"], _fits(ti, g_), ti["fam"] != "Unknown",
                                                      label_score(ti["text"], ti["t"].get("height", 0.0), 0.0)))
                 # another room's name in it as well: the trace ran through a
-                # doorless opening - Phase B's leak search splits it from the labels
-                if foreign_labels(s_["poly"], pick_["t"], fill_sqm=a_):
-                    return pick_, None, "holds another room's name", {"contested": True}
+                # doorless opening - Phase B's leak search splits it from the
+                # labels. A shaft's name standing in the room (PHE-SHAFT
+                # 3260X1270 written in a toilet - BHUB refuge floors) is a note
+                # about the shaft, not a room competing for the space.
+                foreign_ = [t_ for t_ in foreign_labels(s_["poly"], pick_["t"], fill_sqm=a_, texts=True)
+                            if not _shaft_like(t_, family_for_label(t_, _FAMILY_RULES)["name"])]
+                if foreign_:
+                    return pick_, None, "holds another room's name (%s)" % " / ".join(
+                        " ".join(str(t_).split())[:24] for t_ in foreign_[:2]), {"contested": True}
                 if pick_["shaft_like"]:
                     return pick_, "Shaft", "a shaft name in a %.1f sq.m space, %s" % (
                         a_, "no shaft X beside it" if not shafts_ else "no door of its own"), {}
