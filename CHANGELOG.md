@@ -2204,3 +2204,30 @@ Step 3's stats gain `columns_tier1/2/3`, `column_sizes` (by library name) and `c
 ### Files
 
 `column_library.json` (new), `column_library.py` (new), `geoengine.py` (`_column_shapes`, `_more_columns`, `_runs_past`, `_touches_walls`, `_holds_lines`, `_seg_index`, `_size_name`; `PLANT(?!ED)`), `dxf_reader.py` (`_floor_columns` returns the tiers and the review shapes; Step 3 draws the review marks on `AI_REVIEW` and counts the tiers; the library files are in the floor-pass cache stamp), `tests/test_column_library.py` (new).
+
+## 2026-10-17 (late night) — the columns are step 00 of Step 3 (rule `columns_first`)
+
+The columns were found before the floor passes (the column finder, tiers 1-3) and locked before the early wall trace, but they were no step of their own: the first wall pass (W1, `_detect_walls`) paired a column's outline lines as wall strips, and a column found only by its cross (the X sequence, step 6) was decided after W1 and the early trace and never cut from the walls drawn (W2, W3 - `LOCKED_NEVER_WALL` has no `x_column`, `wall_polygons` got the finder's columns only). Before the column library merge, XA had walls drawn over two such columns (0.09 sq.m).
+
+Rule **`columns_first`** (group walls, **on by default**) - the sequence is now 00, 01 ... 12:
+
+- **00 columns** (timed as `00 columns ...`): the finder's columns, and every X mark that is a column's cross by the two tests that read no wall - on a column, or inside a solid fill no larger than itself (`xplace.early_column`, the same tests `x_facts` reads; step 6 of the X sequence decides the same X a column) - are locked before anything else (`columns_first_crosses`).
+- **W1**: no strip lies in a column (`w1_strips_in_columns`): the X facts, the lift lobbies, the shafts' cuts and the door evidence no longer read a column's inside as wall. The lines inside a column stay W1 faces - they bound the rooms where the finder's outline is not the drawn one: taken out too (simulated), XA's FIRE LIFT LOBBY ran over the steel column beside it (+0.90 sq.m).
+- **W2 / W3** and the spaces' blocked cells are cut round every column: the finder's, step 00's, and the X sequence's (the third cross test, a steel column's outline round the cross, reads the walls and stays in the sequence); pass 11's trace never covers an `x_column`.
+- Off: as before.
+
+### What changed on the test floors (today's merged code → rule on; the user's runs replayed)
+
+| Floor | W1 strips in columns dropped | X classes | AI_WALL (Step 3 / final) | Rooms |
+|---|---|---|---|---|
+| BHUB 1st | 0 | unchanged | unchanged | unchanged |
+| Aquila 2nd | 137 | unchanged | unchanged | unchanged |
+| Centaurus 11th | 8 | unchanged | unchanged | unchanged |
+| P285 11th | 0 | unchanged | unchanged | unchanged |
+| XA 37th | 17 | unchanged | 48.45 → 48.43 (slivers along column faces) / unchanged | unchanged |
+
+With the rule off, XA and Aquila came out identical to today's code. 892 tests pass (882 + 10 new in `tests/test_columns_first.py`).
+
+### Files
+
+`dxf_reader.py` (step 00 in `_floor_pass_rules`, `columns_for_walls`), `xplace.py` (`early_column`, `_on_column`, `_in_column_fill`, `ON_A_COLUMN`, `IN_A_FILL`; `x_facts` reads the same helpers), `rules.py` (`columns_first`), `tests/test_columns_first.py` (new).

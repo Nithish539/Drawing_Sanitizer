@@ -9252,6 +9252,65 @@ def _floor_pass_rules(job):
         LM.lock("x_box", [_lbx(*cl["bbox"]) for cl in x_clusters
                           if _point_in_polygon(cl["cx"], cl["cy"], floor_poly)])
         LM.lock("column", job.get("columns") or [])
+    # 00 columns (rule columns_first, 2026-10-17): the columns before any
+    # wall - the column finder's (geoengine._column_shapes: the grid, the
+    # column layers, the column size library) and the X marks that are a
+    # column's cross by the two tests that read no wall: on a column, or
+    # inside a solid fill no larger than itself (xplace.early_column; the X
+    # sequence decides the same X a column at its step 6). They are locked
+    # here; no W1 strip lies in a column (a column's outline lines a wall's
+    # thickness apart pair as a wall), and W2 / W3 are cut round every
+    # column (columns_for_walls: the third cross test, a steel column's
+    # outline, reads the walls and stays in the X sequence; its columns are
+    # cut too). The lines inside a column stay W1 faces: they bound the
+    # rooms where the finder's outline is not the drawn one (taken out, XA's
+    # FIRE LIFT LOBBY ran over the steel column beside it, +0.90 sq.m).
+    col_first = bool(rule["columns_first"])
+    cols_first, col_pgs0 = [], []
+    if col_first:
+        from shapely.geometry import Polygon as _C0P, box as _c0b
+        for c_ in job.get("columns") or ():
+            try:
+                g_ = (c_ if hasattr(c_, "geom_type") else _C0P([tuple(p_[:2]) for p_ in c_])).buffer(0)
+            except Exception:                         # noqa: BLE001
+                continue
+            if not g_.is_empty and g_.area > 0:
+                col_pgs0.append(g_)
+        if x_clusters:
+            from . import xplace as _xp0
+            from shapely.strtree import STRtree as _C0T
+            hp0 = [h_ for h_ in (_hatch_polys(job.get("wall_hatches")) or []) if h_ is not None and not h_.is_empty]
+            ht0 = _C0T(hp0) if hp0 else None
+            for cl in x_clusters:
+                if not _point_in_polygon(cl["cx"], cl["cy"], floor_poly):
+                    continue
+                why0 = _xp0.early_column(cl["bbox"], col_pgs0, hp0, ht0)
+                if why0 is None or why0 == _xp0.ON_A_COLUMN:
+                    continue                          # no column's cross, or the finder has the column
+                try:
+                    q0 = (_C0P(cl["poly"]) if cl.get("region") and len(cl.get("poly") or ()) >= 3
+                          else _c0b(cl["mn_x"], cl["mn_y"], cl["mx_x"], cl["mx_y"])).buffer(0)
+                except Exception:                     # noqa: BLE001
+                    continue
+                if not q0.is_empty and q0.area > 0:
+                    cols_first.append([tuple(p_) for p_ in list(q0.minimum_rotated_rectangle.exterior.coords)[:4]])
+            if cols_first:
+                stats["columns_first_crosses"] += len(cols_first)
+                if ep:
+                    LM.lock("column", cols_first)
+        col_all0 = col_pgs0 + [_C0P(q_).buffer(0) for q_ in cols_first]
+    else:
+        col_all0 = []
+
+    def columns_for_walls():
+        """What the walls drawn (W2, W3) are cut round: the column finder's
+        columns - and, with columns_first, the columns' crosses (step 00, and
+        the X sequence's step 6) too."""
+        if not col_first:
+            return list(job.get("columns") or [])
+        return list(job.get("columns") or []) + list(cols_first) + \
+            [c_["poly"] for c_ in x_columns if c_.get("poly")]
+    _tick("00 columns (the finder's and the columns' crosses, locked before the walls)")
     if rule["x_frames_not_walls"] and x_clusters:
         from . import xplace as _xp
         bxs_ = [cl["bbox"] for cl in x_clusters]
@@ -9288,6 +9347,25 @@ def _floor_pass_rules(job):
                           break_lines=rule["break_lines"],
                           overrun_caps=rule["overrun_wall_ends"],
                           plate=floor_poly, hatches=job.get("wall_hatches"))
+    if col_all0 and walls.get("strips"):
+        # columns_first: no W1 strip lies in a column (a column's outline
+        # lines a wall's thickness apart pair as a wall)
+        from shapely.geometry import Polygon as _C2P
+        from shapely.strtree import STRtree as _C2T
+        ct2 = _C2T(col_all0)
+        keep2 = []
+        for st_ in walls["strips"]:
+            try:
+                sp_ = _C2P(st_["pts"]).buffer(0)
+            except Exception:                         # noqa: BLE001
+                keep2.append(st_)
+                continue
+            if not sp_.is_empty and sp_.area > 0 and any(
+                    col_all0[int(k_)].intersection(sp_).area >= 0.5 * sp_.area for k_ in ct2.query(sp_)):
+                stats["w1_strips_in_columns"] += 1
+                continue
+            keep2.append(st_)
+        walls["strips"] = keep2
     faces, caps = walls["faces"], walls["caps"]
     wall_exclusions = [{"floor": floor_name, "rule": r, "line": list(s)} for r, s in walls.get("excluded") or []]
     for r, _s in walls.get("excluded") or []:
@@ -11560,7 +11638,7 @@ def _floor_pass_rules(job):
                     wcounts_e = {}
                     pieces_e, _rep_e = wall_polygons(
                         strips_e, floor_poly, ([] if early_wt is not None else job.get("wall_hatches")),
-                        job.get("columns") or [], ([] if OPENINGS_IN_WALLS else openings_e), doors_e,
+                        columns_for_walls(), ([] if OPENINGS_IN_WALLS else openings_e), doors_e,
                         list(job.get("column_rejects") or []) + (openings_e if OPENINGS_IN_WALLS else []),
                         bridge=(openings_e if OPENINGS_IN_WALLS else []), counts=wcounts_e,
                         locked=(LM.union(LOCKED_NEVER_WALL) if ep else None))
@@ -11606,7 +11684,7 @@ def _floor_pass_rules(job):
                         blocked.append(_SPoly(c0["poly"]).buffer(0))
                     except (ValueError, TypeError):
                         pass
-            for c0 in job.get("columns") or ():
+            for c0 in columns_for_walls():
                 try:
                     blocked.append(_SPoly(c0).buffer(0))
                 except (ValueError, TypeError):
@@ -13190,7 +13268,8 @@ def _floor_pass_rules(job):
                 wt = _wt.trace_floor(job.get("segs"), job.get("all_hatches"), job.get("rows"), floor_poly,
                                      arcs=job.get("wall_arcs"),
                                      skip=((lambda sg, _k=wall_skip: _seg_key(sg) in _k) if ep else None),
-                                     locked=(LM.union(LOCKED_NEVER_WALL + ("column",)) if ep else None),
+                                     locked=(LM.union(LOCKED_NEVER_WALL + (("column", "x_column") if col_first
+                                                                           else ("column",))) if ep else None),
                                      counts=wt_counts)
                 for k_, v_ in wt_counts.items():
                     stats[k_] += v_
@@ -13299,7 +13378,7 @@ def _floor_pass_rules(job):
             pieces, wrep = wall_polygons(
                 strips_drawn, floor_poly,
                 ([] if wt is not None else job.get("wall_hatches")),
-                job.get("columns") or [], ([] if OPENINGS_IN_WALLS else openings),
+                columns_for_walls(), ([] if OPENINGS_IN_WALLS else openings),
                 door_out,
                 list(job.get("column_rejects") or []) + (openings if OPENINGS_IN_WALLS else []),
                 bridge=(openings if OPENINGS_IN_WALLS else []),
@@ -13345,7 +13424,7 @@ def _floor_pass_rules(job):
                     _balcony_to_grow(merged, family_for_label):
                 room_pieces, _r = wall_polygons(
                     walls.get("strips") or [], floor_poly, job.get("wall_hatches"),
-                    job.get("columns") or [], openings,
+                    columns_for_walls(), openings,
                     door_quads, job.get("column_rejects") or [], veto=room_veto, locked=locked_w)
             # A balcony or refuge area is measured to the outer face of its
             # parapet: the wall pieces along its open side, which no other

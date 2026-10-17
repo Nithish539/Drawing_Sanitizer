@@ -881,6 +881,22 @@ RULES = [
         "default": True,
     },
     {
+        "key": "columns_first",
+        "group": "walls",
+        "title": "Columns found and locked before any wall (step 00)",
+        "detail": "Step 00 of Step 3 (2026-10-17): the column finder's columns (the floor's grid, "
+                  "the column layers, the column size library) and the X marks that are a column's "
+                  "cross by the tests that read no wall (on a column, or inside a solid fill no "
+                  "larger than itself) are locked before the walls. No strip of the first wall pass "
+                  "(W1) lies in a column - a column's outline lines a wall's thickness apart pair as "
+                  "a wall, and the X marks, lift lobbies and shafts read W1's strips as wall; the "
+                  "column's lines still bound the rooms. The walls drawn (W2, W3) are cut round every "
+                  "column, a column found later by a steel outline round its cross included. Off: "
+                  "W1's strips inside columns are wall, and only the finder's columns are cut from "
+                  "the walls drawn.",
+        "default": True,
+    },
+    {
         "key": "walls_before_spaces",
         "group": "walls",
         "title": "Walls built in full before the spaces are traced (W2 first, W3 on the rooms)",
